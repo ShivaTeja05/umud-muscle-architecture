@@ -42,7 +42,7 @@ about 3.2 GPU-h, and about 8 GPU-h if #1–#5 all run. Quota weeks left before t
 ## Exact commands (run from the project root)
 
 ```bash
-cd "/Users/gaddamshivateja/Documents/ChatGPT/UMUD Challenge_ Muscle Architecture in Ultrasound Data"
+cd /path/to/repo   # repository root
 K=".venv/bin/kaggle"
 
 # --- push (after the quota reset; retry later if Kaggle says too many GPU sessions are running)

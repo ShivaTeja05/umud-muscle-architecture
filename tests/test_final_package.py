@@ -246,7 +246,10 @@ def test_config_blocks(name):
     assert set(cfg["geometry_space"]["scanners"]) == set(cfg["groups"]["all"])
     for e in cfg["lb_constants"]:
         assert e["grid"] and str(e.get("rationale", "")).strip() and e.get("kind"), e["name"]
-    assert "/private/tmp" not in json.dumps(cfg) and "scratchpad" not in json.dumps(cfg)
+    # Check the raw YAML, not the resolved config: ${repo} legitimately resolves under /tmp
+    # when the repository itself is cloned there.
+    raw = (CFG / f"{name}.yaml").read_text(encoding="utf-8")
+    assert "/private/tmp" not in raw and "scratchpad" not in raw
 
 
 def test_final_A_is_final_B_plus_the_telemed_mt_constant_only():
