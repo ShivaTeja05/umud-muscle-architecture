@@ -1,0 +1,118 @@
+# =====================================================================================================
+# Final B -- the final pipeline WITHOUT any LB-tuned continuous constant.
+#   = C18 (image-space base)
+#   + native geometry for Philips Lumify (c = 0.844) and Siemens Juniper (c = 1.125) PA / FL   [J1, J2]
+#   + Telemed PA pulled 25 % toward the coupling-implied PA asin(1.067 MT / FL)                  [K25b rule]
+#   Telemed MT is NOT shifted (no J4): Final A = this file + the LB-only Telemed MT -0.5 mm.
+# The coupling rule uses this pipeline's own MT (C18 MT), so the Telemed PA cells differ slightly from Final A's
+# (whose coupling saw MT - 0.5). Predicted public score: see `prediction` below.
+#   umud-run --config configs/final_B.yaml --stage build   -> artifacts/final/final_B/final_B.csv
+# GPL-3.0-only.
+# =====================================================================================================
+schema: umud-config/2
+extends: C18.yaml
+name: final_B
+description: "C18 + Lumify / Siemens native geometry + Telemed PA coupling pull (lambda 0.25); no LB-only constant"
+
+reference:                        # never scored as such (see prediction); the build must give exactly this file
+  sha256: 30512ad21b1b5bc8c515a281c36a245a376f9c3858ba2e126e40f82349879f22
+  expect: sha256
+
+prediction:
+  rule: "public LB is exactly additive over disjoint (scanner group x component) cells (MAE per component)"
+  cells_vs_final_A: "TEL.mt (J4 removed) and TEL.pa (coupling recomputed with MT = C18 MT); every other cell equal"
+  exact_additive_variant: "B1 + Final A's Telemed PA cells = 0.23297 + (0.23931 - 0.23693) = 0.23535 (J4 touches
+    only TEL.mt, K25b only TEL.pa; verified disjoint by tests/test_final_package.py)"
+  this_file: "differs from that variant only in TEL.pa (140 rows, mean +0.081 deg: T12 +0.084, T10 +0.076; official
+    distance 0.00204 over all 309 rows). Prediction 0.23535 + d with the hard bound |d| <= 0.0048 (the largest change
+    any 102-row public subset can see; ~0.002 for a typical subset). The extra pull is in the direction that won
+    (K25b gained 0.00396 for a 0.0096 move), so d is more likely <= 0 (about -0.0008 at K25b's efficiency)."
+
+geometry_space:
+  scanners:
+    siemens_juniper:        {space: physical}
+    philips_lumify:         {space: physical}
+
+pa_head:
+  coupling_pull: {weight: 0.25, groups: [telemed], k: 1.067}
+
+lb_constants:
+  - name: telemed_fl_shrink
+    target: [fl_rules.shrink_lambda.telemed_artus_1200x800, fl_rules.shrink_lambda.telemed_artus_1088x644]
+    grid: [0.0, 1.0]
+    value: 0.0
+    status: adopted
+    kind: method_choice
+    ledger: "C12 0.37670 -> C18 0.33526 (-0.0414)"
+    rationale: "EB FL shrinkage toward the group median hurts on Telemed; predicted by the dynamic (Telemed) benchmark"
+  - name: rater_offset_pa
+    target: rater_style.pa_add
+    grid: [0.0, 0.3285798847465733, 0.6571597694931466]
+    value: 0.3285798847465733
+    status: adopted
+    kind: benchmark_constant_LB_confirmed
+    ledger: "C17 (no offset) 0.38091 vs C12 0.37670"
+    rationale: "pre-registered benchmark rule on the OSF xlsx, re-estimated at every build"
+  - name: rater_offset_mt
+    target: rater_style.mt_add
+    grid: [0.0, 0.03876938123115803, 0.07753876246231606]
+    value: 0.03876938123115803
+    status: adopted
+    kind: benchmark_constant_LB_confirmed
+    ledger: "moved with rater_offset_pa"
+    rationale: "benchmark rule value"
+  - name: lumify_geometry
+    target: geometry_space.scanners.philips_lumify.space
+    grid: [image, physical]
+    value: physical
+    status: adopted
+    kind: label_space_choice
+    ledger: "J1 (C18 + Lumify native, c = 0.844) 0.29452 vs C18 0.33526 (-0.04074)"
+    rationale: "binary choice of the label space; the factor is not fitted: 16:9 screen -> 3:2 frame (0.84375) and
+      the 'P' marker detector (median 0.840) confirm it on every build"
+  - name: siemens_geometry
+    target: geometry_space.scanners.siemens_juniper.space
+    grid: [image, physical]
+    value: physical
+    status: adopted
+    kind: label_space_choice
+    ledger: "J2 (C18 + Siemens native, c = 1.125) 0.28005 vs C18 (-0.05521); B1 = C18 + J1 + J2 = 0.23931 (additive)"
+    rationale: "binary choice; factor = native 1152x864 -> 1200x800 (1.125), confirmed by the 45-degree UI triangles"
+  - name: telemed1200_geometry
+    target: geometry_space.scanners.telemed_artus_1200x800.space
+    grid: [image, physical]
+    value: image
+    status: adopted
+    kind: label_space_choice
+    ledger: "J3 (Telemed-1200 native, c = 0.9067) lost: +0.05413"
+    rationale: "Telemed labels are in the provided image space (no transform)"
+  - name: telemed_pa_coupling_weight
+    target: pa_head.coupling_pull.weight
+    grid: [0.0, 0.25, 0.5]
+    value: 0.25
+    status: adopted
+    kind: method_choice
+    ledger: "K25b (B1_J4 + Telemed PA 25 % toward asin(1.067 MT / FL)) 0.23297 vs B1_J4 0.23693 (-0.00396)"
+    rationale: "physics coupling FL sin(PA) = k MT with the expert k = 1.067 measured offline (static benchmark 1.07,
+      VL 1.067); Telemed predictions had k 0.95-1.02. The pull weight was fixed on a pre-declared grid {0, 0.25,
+      0.5} before scoring and only its first point was scored."
+  - name: telemed_mt_offset
+    target: [mt_edge.constant_mm.telemed_artus_1200x800, mt_edge.constant_mm.telemed_artus_1088x644]
+    grid: [0.0, -0.25, -0.5, -0.8]
+    value: 0.0
+    status: excluded_from_final_B
+    kind: scanner_constant
+    ledger: "J4 (-0.5) won -0.00238 on the LB; no offline justification -> Final A only"
+    rationale: "Final B carries no LB-tuned continuous constant"
+
+mt_edge:
+  constant_mm:
+    default: 0.0
+    telemed_artus_1200x800: 0.0
+    telemed_artus_1088x644: 0.0
+
+declarations:
+  - "LB-guided method choices (declared): Telemed FL unshrunk (C18); Lumify and Siemens PA / FL in their native
+     square-pixel geometry with fixed per-scanner factors measured from image content (J1, J2); Telemed in image space
+     (J3 rejected); Telemed PA coupling pull lambda = 0.25 on a pre-declared grid (K25b). No LB-tuned continuous
+     constant."

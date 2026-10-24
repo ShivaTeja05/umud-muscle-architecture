@@ -1,0 +1,13 @@
+.venv/
+build/
+*.egg-info/
+__pycache__/
+.ruff_cache/
+.pytest_cache/
+data/
+artifacts/
+.kaggle/
+*.zip
+*.tar
+*.tar.gz
+.DS_Store

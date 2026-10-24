@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UMUD Annotator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">UMUD annotator</div>
+  <div class="nav">
+    <button id="btn-prev" title="Previous task (B or Left arrow)">&#8592; Prev</button>
+    <input id="jump" type="text" placeholder="Jump: 123 or IMG_00123" title="Type a number or image id and press Enter" autocomplete="off">
+    <button id="btn-next" title="Next task (N or Right arrow)">Next &#8594;</button>
+    <button id="btn-next-todo" title="Next unfinished task (Shift+N)">Next unfinished</button>
+  </div>
+  <div id="task-info" class="task-info"></div>
+  <div id="progress" class="progress"></div>
+  <div id="save-status" class="save-status">not saved</div>
+  <button id="btn-help" title="Shortcuts and protocol (?)">?</button>
+</header>
+
+<main id="layout">
+  <section id="stage">
+    <canvas id="canvas" tabindex="0"></canvas>
+    <canvas id="loupe" width="200" height="200"></canvas>
+    <div id="toast" class="toast hidden"></div>
+    <div id="instruction" class="instruction"></div>
+  </section>
+
+  <aside id="panel">
+    <div class="tools" role="tablist">
+      <button class="tool" data-tool="mt" title="Muscle thickness (M or 1)">MT <span class="cnt" id="cnt-mt">0/3</span></button>
+      <button class="tool" data-tool="fl" title="Fascicle length (F or 2)">FL <span class="cnt" id="cnt-fl">0/3</span></button>
+      <button class="tool" data-tool="pa" title="Pennation angle (P or 3)">PA <span class="cnt" id="cnt-pa">0/3</span></button>
+    </div>
+
+    <div class="card">
+      <div class="means">
+        <div><span class="lbl">PA</span><span id="mean-pa" class="val">&ndash;</span><span class="unit">deg</span></div>
+        <div><span class="lbl">FL</span><span id="mean-fl" class="val">&ndash;</span><span class="unit">mm</span></div>
+        <div><span class="lbl">MT</span><span id="mean-mt" class="val">&ndash;</span><span class="unit">mm</span></div>
+      </div>
+      <div id="warnings" class="warnings"></div>
+      <table id="meas-table"><tbody></tbody></table>
+    </div>
+
+    <div class="card hidden" id="review">
+      <div class="card-title" id="review-title">Review (shown only after the image is finished)</div>
+      <table id="review-table"><tbody></tbody></table>
+      <div id="review-notes" class="small"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Image <button id="btn-auto" class="mini" title="Auto contrast (A)">Auto</button> <button id="btn-reset-adj" class="mini" title="Reset adjustments">Reset</button></div>
+      <label class="slider">Brightness <input id="sl-bright" type="range" min="-0.6" max="0.6" step="0.01" value="0"></label>
+      <label class="slider">Contrast <input id="sl-contrast" type="range" min="0.4" max="4" step="0.01" value="1"></label>
+      <label class="slider">Gamma <input id="sl-gamma" type="range" min="0.3" max="3" step="0.01" value="1"></label>
+      <div class="checks">
+        <label><input id="ck-autoeach" type="checkbox"> auto-contrast each image</label>
+        <label><input id="ck-guides" type="checkbox" checked> MT guides (G)</label>
+        <label><input id="ck-loupe" type="checkbox" checked> loupe (L)</label>
+        <label><input id="ck-scale" type="checkbox"> 1 cm grid (K)</label>
+        <label><input id="ck-labels" type="checkbox" checked> value labels (V)</label>
+        <label title="Two-finger scroll pans, pinch zooms (otherwise the wheel zooms)"><input id="ck-trackpad" type="checkbox"> trackpad mode</label>
+      </div>
+      <div id="frames" class="frames hidden"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Notes / flag</div>
+      <div class="checks">
+        <label><input id="ck-flag" type="checkbox"> flag this image (X)</label>
+      </div>
+      <textarea id="note" rows="2" placeholder="e.g. second muscle visible, unclear deep apo"></textarea>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Progress</div>
+      <div id="stats" class="small"></div>
+      <div id="grids"></div>
+    </div>
+
+    <div class="card buttons">
+      <button id="btn-export" title="Download the test labels CSV (expanded to all clip frames)">Export CSV</button>
+      <button id="btn-export-calib" title="Download the calibration labels CSV (separate file)">Export calib CSV</button>
+      <button id="btn-import" title="Load a previously exported CSV (test or calibration)">Import CSV</button>
+      <input id="file-import" type="file" accept=".csv,text/csv" hidden>
+    </div>
+  </aside>
+</main>
+
+<div id="gate" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-body gate-body">
+    <h2>Calibration first</h2>
+    <p id="gate-text"></p>
+    <div class="buttons">
+      <button id="btn-gate-back" class="primary" title="Open the next unfinished calibration image (Enter)">Continue calibration</button>
+      <button id="btn-gate-skip" title="Start the test images without finishing the calibration">Skip calibration&hellip;</button>
+    </div>
+  </div>
+</div>
+
+<div id="help" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-body">
+    <button id="btn-help-close" class="close" title="Close (Esc)">&times;</button>
+    <h2>Order of work</h2>
+    <ol>
+      <li><b>Calibration</b> (12 images, ids CAL_01&ndash;CAL_12, violet in the grid). These are public benchmark images with known expert answers, which stay hidden. Measure them exactly like test images. They tell us your personal error and bias per parameter. Four of them are frames of a calf-raise video: there only FL and PA are needed, MT is optional.</li>
+      <li><b>Telemed clips</b> (28 tasks, IMG_00056&ndash;00195, first frame of each clip).</li>
+      <li>The other test images, only if there is time.</li>
+    </ol>
+    <h2>Where to click (schematic)</h2>
+    <svg class="schematic" viewBox="0 0 640 210" role="img" aria-label="Schematic of the MT, FL and PA measurements">
+      <rect x="0" y="0" width="640" height="210" rx="8" class="sk-bg"/>
+      <polygon points="20,32 620,40 620,50 20,42" class="sk-band"/>
+      <polygon points="20,158 620,138 620,148 20,168" class="sk-band"/>
+      <text x="26" y="22" class="sk-t">superficial aponeurosis: click its LOWER (inner) edge</text>
+      <text x="26" y="190" class="sk-t">first deep aponeurosis: click its UPPER (inner) edge</text>
+      <g class="sk-fas"><path d="M140.0 154.0 L255.8 45.1"/><path d="M200.0 152.0 L312.9 45.9"/><path d="M400.0 145.3 L503.1 48.4"/><path d="M460.0 143.3 L560.1 49.2"/></g>
+      <line x1="95" y1="43.0" x2="95" y2="155.5" class="sk-mt"/><circle cx="95" cy="43.0" r="3" class="sk-dot"/><circle cx="95" cy="155.5" r="3" class="sk-dot"/><line x1="320" y1="46.0" x2="320" y2="148.0" class="sk-mt"/><circle cx="320" cy="46.0" r="3" class="sk-dot"/><circle cx="320" cy="148.0" r="3" class="sk-dot"/><line x1="560" y1="49.2" x2="560" y2="140.0" class="sk-mt"/><circle cx="560" cy="49.2" r="3" class="sk-dot"/><circle cx="560" cy="140.0" r="3" class="sk-dot"/>
+      <text x="88" y="104" class="sk-t mt" text-anchor="end">MT</text>
+      <path d="M262.0 149.9 L371.8 46.7" class="sk-fl"/><text x="338" y="92" class="sk-t fl">FL: a central fascicle, apo to apo</text>
+      <path d="M440.0 144.0 L460.0 125.2" class="sk-pa"/><path d="M412.0 144.9 L480.0 142.7" class="sk-pa-apo"/>
+      <path d="M464.0 143.2 A 24 24 0 0 0 457.5 127.6" class="sk-arc"/><text x="384" y="176" class="sk-t pa">PA: at the insertion on the deep apo</text>
+    </svg>
+    <ul class="small">
+      <li>MT: lines between the <b>inner</b> edges (the dark muscle side) of the two aponeuroses, never through the bright aponeurosis itself.</li>
+      <li>FL: prefer fascicles in the <b>middle</b> of the image that need the least extrapolation; extend the line straight past the image edge when needed.</li>
+      <li>PA: two clicks on the fascicle <b>close to where it meets the deep aponeurosis</b>, then two clicks along the deep aponeurosis right there.</li>
+    </ul>
+    <h2>Protocol (organiser, UMUD test labels)</h2>
+    <ul>
+      <li><b>Superficial muscle only</b>: the top (superficial) aponeurosis and the <i>first</i> deep aponeurosis below it. Ignore deeper muscles.</li>
+      <li><b>MT</b> &times;3: vertical lines (global image vertical) at the left, middle and right of the image. Click the <i>inner</i> edge of the superficial aponeurosis, then the <i>inner</i> edge of the deep aponeurosis. x is locked to the first click.</li>
+      <li><b>FL</b> &times;3: trace each fascicle as a segmented line from the deep to the superficial aponeurosis, following its curvature. Extend by hand beyond the image if needed (click outside the image). Choose fascicles that need the <i>least extrapolation</i> (near the image centre). Double-click or Enter ends a fascicle.</li>
+      <li><b>PA</b> &times;3: angle at the insertion on the deep aponeurosis. Click 2 points along a fascicle close to its insertion, then 2 points along the deep aponeurosis at that insertion. Use different fascicles from the FL ones.</li>
+      <li>Each parameter is the mean of its 3 values. Scale: the vertical scale bar, applied to both axes (square pixels, even on stretched 1200&times;800 images). The tool does this for you.</li>
+      <li>Clips IMG_00056&ndash;00195: only the first frame of each 5-frame clip is a task; its values are copied to all 5 frames on export. Use <kbd>,</kbd> <kbd>.</kbd> to flick through the frames (motion helps to see fascicles).</li>
+    </ul>
+    <h2>Mouse</h2>
+    <ul>
+      <li>Click: place a point. Drag (any button) or Space+drag: pan. Wheel / pinch: zoom at cursor.</li>
+      <li>Drag an existing point of this image to adjust it (hover turns it white).</li>
+    </ul>
+    <h2>Keys</h2>
+    <table class="keys">
+      <tr><td><kbd>M</kbd>/<kbd>1</kbd> <kbd>F</kbd>/<kbd>2</kbd> <kbd>P</kbd>/<kbd>3</kbd></td><td>MT / FL / PA tool</td></tr>
+      <tr><td><kbd>Enter</kbd> or double-click</td><td>finish the fascicle polyline</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>cancel the measurement in progress</td></tr>
+      <tr><td><kbd>Backspace</kbd> / <kbd>Ctrl/Cmd+Z</kbd></td><td>undo (last point, then last measurement)</td></tr>
+      <tr><td><kbd>Shift+Ctrl/Cmd+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>redo</td></tr>
+      <tr><td><kbd>N</kbd>/<kbd>&rarr;</kbd>, <kbd>B</kbd>/<kbd>&larr;</kbd>, <kbd>Shift+N</kbd></td><td>next, previous, next unfinished</td></tr>
+      <tr><td><kbd>0</kbd> or <kbd>Z</kbd></td><td>fit image to window</td></tr>
+      <tr><td><kbd>+</kbd> <kbd>-</kbd></td><td>zoom in / out</td></tr>
+      <tr><td><kbd>A</kbd></td><td>auto contrast</td></tr>
+      <tr><td><kbd>G</kbd> <kbd>L</kbd> <kbd>K</kbd> <kbd>V</kbd></td><td>toggle MT guides, loupe, 1 cm grid, value labels</td></tr>
+      <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>previous / next frame of a clip (view only)</td></tr>
+      <tr><td><kbd>X</kbd></td><td>flag image</td></tr>
+      <tr><td><kbd>?</kbd> or <kbd>H</kbd></td><td>this help</td></tr>
+    </table>
+    <p class="small">Model hints, if present, are revealed only after all 9 measurements of a test image are done (to avoid anchoring); calibration images never show model values or answers. Labels autosave to this browser and, via serve.py, to data/annotator/autosave.json and labels.csv. Hand labels of the test set must be declared as external data.</p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
