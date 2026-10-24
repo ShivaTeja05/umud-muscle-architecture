@@ -1,7 +1,8 @@
 """umud-run: the config-driven UMUD pipeline that rebuilds the final submissions end to end.
 
-    umud-run --config configs/final_A.yaml --stage build        # Final A (rebuilds the best public file byte-for-byte)
-    umud-run --config configs/final_B.yaml --stage build        # Final B (same pipeline without the LB-only constant)
+    umud-run --config configs/final_A.yaml --stage build        # Final A = KG0 (the best public file, byte-for-byte)
+    umud-run --config configs/final_B.yaml --stage build        # Final B = Final A without the LB-only MT constant
+    umud-run --config configs/K25b.yaml    --stage build        # the previous best file (Final A before the G0 head)
     umud-run --config configs/C18.yaml     --stage build        # the C18 base file
     umud-run --config configs/final_A.yaml --stage all          # layout -> maps -> measure (verify) -> build
     umud-run --config X.yaml --stage measure --full --datasets test   # re-measure every test image from the maps
@@ -20,13 +21,15 @@ measure  Per-image geometry from the maps, one image at a time. Default: verify 
 build    The submission from the per-image caches: PA / FL heads -> shrinkage (scanner x muscle centres, confidence
          PA rule, empirical-Bayes FL) -> Telemed clip medians -> rater-style offsets (re-estimated from the OSF xlsx
          by the pre-registered rule) -> the 4-decimal stage file -> post rules (native-geometry transform with
-         factors confirmed by the image detectors, per-scanner MT constant, Telemed PA coupling pull), each rounded
-         to 4 decimals inside the bounds -> CSV. Every choice and constant is read from the config.
+         factors confirmed by the image detectors, per-scanner MT constant, Telemed PA coupling pull, Telemed G0 PA
+         head), each rounded to 4 decimals inside the bounds -> CSV; a config with `derive` (Final B) is then
+         derived from another config's file (Final A without its MT constant, coupling term recomputed on the own
+         MT). Every choice and constant is read from the config.
 
 Exactness. The scored files were assembled in steps that each wrote a CSV (pandas float repr, CRLF) and re-read it
 (pandas default parser). The build stage performs the same steps in memory (``to_text`` / ``from_text``), including
-the per-image table round trip that the unshrunk Telemed FL went through, so Final A, B1 and C18 are rebuilt
-byte-for-byte (tests/test_final_package.py).
+the per-image table round trip that the unshrunk Telemed FL went through, so Final A (KG0), Final B (B'), K25b, B1
+and C18 are rebuilt byte-for-byte (tests/test_final_package.py).
 
 Laptop rules: one process, no multiprocessing, no torch, one image / map at a time, < 1.5 GB RSS.
 GPL-3.0-only (see LICENSE). External data and models: README.md and THIRD_PARTY_NOTICES.md.
@@ -146,8 +149,24 @@ def load_config(path: str | Path, overrides: dict | None = None, sets: list[str]
     if miss:
         raise ValueError(f"config {path.name} misses blocks {miss}")
     cfg["_resolved"] = dict(file=str(path), sha256=sha256_text(json.dumps(strip_docs(cfg), sort_keys=True,
-                                                                            default=str)))
+                                                                            default=str)),
+                            overrides=copy.deepcopy(overrides or {}), sets=list(sets or []))
     return cfg
+
+
+DERIVE_FREE = ("name", "reference", "lb_constants", "derive")   # top-level keys a derived config may change
+
+
+def config_core(cfg: dict) -> dict:
+    """The config without documentation, names, reference, registry, `derive`, output file name, output directory and
+    the per-scanner MT constants: what a `derive` config must share with the config it is derived from."""
+    c = strip_docs(cfg)
+    for k in DERIVE_FREE:
+        c.pop(k, None)
+    c.get("output", {}).pop("file_name", None)
+    c.get("paths", {}).pop("out_dir", None)
+    c.get("mt_edge", {}).pop("constant_mm", None)
+    return c
 
 
 def strip_docs(obj):
@@ -297,6 +316,20 @@ def read_sub(path: Path) -> pd.DataFrame:
 def official_distance(a: pd.DataFrame, b: pd.DataFrame) -> float:
     b = b.reindex(a.index)
     return float(np.mean([np.mean(np.abs(a[c].to_numpy(float) - b[c].to_numpy(float))) / TAU[c] for c in C3]))
+
+
+def coupling_pa(mt: pd.Series, fl: pd.Series, k: float, lo: float = 0.0) -> pd.Series:
+    """The coupling-implied PA asin(k MT / FL) in degrees (expert coupling FL sin(PA) = k MT)."""
+    return pd.Series(np.degrees(np.arcsin(np.clip(k * mt / fl, lo, 1))), index=mt.index)
+
+
+def g0_head(fused: pd.Series, ins: pd.Series, strip: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """The G0 PA head. gate = (ins - fused > 0): the insertion-strip angle is steeper than the fused head (a sign
+    test, no threshold; a missing insertion angle leaves the gate off). Where the gate is on, the head is the
+    deep-strip field angle against the LOCAL deep tangent (`strip`; missing -> the fused head), else the fused head.
+    Returns (head, gate)."""
+    gate = (ins - fused) > 0
+    return strip.fillna(fused).where(gate, fused), gate
 
 
 def _same(a, b) -> bool:
@@ -703,7 +736,9 @@ class Assembler:
         1. geometry_space: native-geometry transform of PA / FL for the scanners declared `physical`;
         2. mt_edge.constant_mm: per-scanner MT constant;
         3. pa_head.coupling_pull: Telemed PA pulled toward the coupling-implied PA asin(k MT / FL), computed on the
-           result of 1-2 (so with the final MT and FL).
+           result of 1-2 (so with the final MT and FL);
+        4. pa_head.telemed_head: the Telemed PA cells re-derived from the G0 head with the PA recipe and the same
+           coupling term (Assembler.telemed_head); it supersedes rule 3 on those cells.
         1 and 2 are computed from S; the cells they change are then copied into the state (exactly as the scored
         probe files were composed)."""
         ids = self.test_ids()
@@ -750,12 +785,12 @@ class Assembler:
             put(self._finish(X), m, ["mt_mm"], f"mt_constant({v})")
             steps.append(dict(rule="mt_constant", groups=sorted(set(g[m])), value_mm=v))
         cp = self.cfg["pa_head"]["coupling_pull"]
+        pre_pull = from_text(to_text(state, ids))      # rules 1-2 as written: the MT / FL the coupling terms see
         if float(cp["weight"]) != 0.0:
-            base = from_text(to_text(state, ids))
+            base = pre_pull
             m = g.isin(self.expand_groups(cp["groups"]))
             pre = base["pa_deg"] - self.offsets()["pa_add"]
-            cpl = pd.Series(np.degrees(np.arcsin(np.clip(float(cp["k"]) * base["mt_mm"] / base["fl_mm"], 0, 1))),
-                            index=base.index)
+            cpl = coupling_pa(base["mt_mm"], base["fl_mm"], float(cp["k"]))
             new = base["pa_deg"] + float(cp["weight"]) * (cpl - pre)
             F = base.copy()
             F.loc[m, "pa_deg"] = self._finish(base.assign(pa_deg=new), clip_median=False,
@@ -767,10 +802,138 @@ class Assembler:
                               k=float(cp["k"]), mean_change_deg={grp: round(float((staged.loc[g == grp, "pa_deg"]
                                                                                     - base.loc[g == grp, "pa_deg"]).mean()), 4)
                                                                  for grp in sorted(set(g[m]))}))
+        th = self.cfg["pa_head"].get("telemed_head") or {}
+        if th.get("enabled", False):
+            m, new, st = self.telemed_head(pre_pull, state, th)
+            full = state["pa_deg"].copy()
+            full[m] = new[m]
+            F = state.copy()
+            F.loc[m, "pa_deg"] = self._finish(state.assign(pa_deg=full), clip_median=False,
+                                              roundtrip=False).loc[m, "pa_deg"]
+            staged = from_text(to_text(F, ids))
+            before = state.copy()
+            for grp in sorted(set(g[m])):          # the head rule carries the coupling term: it replaces rule 3 here
+                cells[f"{grp}|pa"] = [r for r in cells.get(f"{grp}|pa", []) if not r.startswith("coupling_pull")]
+            put(staged, m, ["pa_deg"], f"telemed_head({st['head']}, coupling={st['coupling']})")
+
+            def mean_d(a: pd.DataFrame, b: pd.DataFrame) -> dict:
+                return {grp: round(float((a.loc[g == grp, "pa_deg"] - b.loc[g == grp, "pa_deg"]).mean()), 4)
+                        for grp in sorted(set(g[m]))}
+            st.update(mean_change_vs_rules12_deg=mean_d(staged, pre_pull), mean_change_vs_rule3_deg=mean_d(staged, before),
+                      rows_changed_vs_rule3=int(((staged["pa_deg"] - before["pa_deg"]).abs() > 0)[m].sum()))
+            steps.append(st)
         overlap = {k: v for k, v in cells.items() if len(v) > 1}
         if overlap and not self.cfg["output"].get("allow_cell_overlap", False):
             raise ValueError(f"post rules overlap on cells {overlap}")
         return state, dict(cells=cells, steps=steps)
+
+    def telemed_head(self, base: pd.DataFrame, state: pd.DataFrame, th: dict) -> tuple[pd.Series, pd.Series, dict]:
+        """Post rule 4 (KG0): the Telemed PA from the G0 head (`g0_head`) on the per-image cache columns, through
+        the PA recipe written out for these rows exactly as the scored KG0 file was built:
+            w h + (1 - w) median_group(h)     per image (w = clip(confidence, 0, 1): the shrink.pa confidence rule;
+                                              Telemed has no muscle cells, so the centre is the scanner-group median)
+            -> median over the clip -> + the rater PA offset as written in the 4-decimal files (round(pa_add, 4))
+            -> + w_c (asin(k MT / FL) - (PA - offset))   the rule-3 coupling term (weight / k of
+                                              pa_head.coupling_pull) on the MT / FL of rules 1-2 (omitted with
+                                              coupling: false)
+        FL is not rebuilt at the new PA (the scored file kept K25b's FL). The written-out recipe is checked on the
+        fused head (fusF) against the pipeline's own Telemed PA after rules 1-2 and after rule 3: both must agree
+        within check_tol, else the build stops. Returns (rows, new unrounded PA on those rows, step info)."""
+        if th.get("head", "G0") != "G0":
+            raise NotImplementedError(f"telemed_head.head {th.get('head')!r} (only G0 is wired)")
+        sp = self.cfg["shrink"]["pa"]
+        if sp["rule"] != "confidence" or float(sp["weight_power"]) != 1.0:
+            raise NotImplementedError("telemed_head needs shrink.pa.rule = confidence with weight_power 1")
+        lay = self.layout()
+        g = lay.loc[base.index, "group"].astype(str)
+        m = g.isin(self.expand_groups(th["groups"]))
+        ids = base.index[m]
+        grp, clip = g[ids], lay.loc[ids, "clip"].astype(int)
+        if (clip < 0).any():
+            raise ValueError("telemed_head groups must consist of detected clips")
+        T = self.load_cache("test").reindex(ids)
+        fused = self.pa_head(T, "deep")                                  # fusF
+        head, gate = g0_head(fused, _col(T, th["gate_column"]), _col(T, th["strip_column"]))
+        conf = _col(T, "confidence")
+        no_cell = pd.Series("", index=ids, dtype=object)
+        off = round(float(self.offsets()["pa_add"]), int(self.cfg["output"]["decimals"]))
+        cp = self.cfg["pa_head"]["coupling_pull"]
+        wc, k = float(cp["weight"]), float(cp["k"])
+        cpl = coupling_pa(base.loc[ids, "mt_mm"], base.loc[ids, "fl_mm"], k)
+        coupling = bool(th.get("coupling", True))
+
+        def recipe(h: pd.Series) -> pd.Series:
+            return self.conf_rule(h, conf, grp, no_cell).groupby(clip).transform("median") + off
+
+        def k25(p: pd.Series) -> pd.Series:
+            return p + wc * (cpl - (p - off))
+
+        chk = {"rules12": float((recipe(fused) - base.loc[ids, "pa_deg"]).abs().max())}
+        if wc != 0.0:
+            chk["rule3"] = float((k25(recipe(fused)) - state.loc[ids, "pa_deg"]).abs().max())
+        tol = float(th["check_tol"])
+        st = dict(rule="telemed_head", head="G0", groups=sorted(set(grp)), coupling=coupling, coupling_weight=wc, k=k,
+                  offset_deg=off, gate=f"{th['gate_column']} - fusF > 0", strip=th["strip_column"], rows=int(m.sum()),
+                  gate_on=int(gate.sum()), gate_on_by_group={x: int(gate[grp == x].sum()) for x in sorted(set(grp))},
+                  recipe_check_max_abs=chk, check_tol=tol)
+        if any(v > tol for v in chk.values()):
+            raise RuntimeError(f"telemed_head: the written-out PA recipe does not reproduce the pipeline's Telemed PA "
+                               f"on the fused head within {tol}: {chk}")
+        new = k25(recipe(head)) if coupling else recipe(head)
+        return m, new.reindex(base.index), st
+
+    def derive(self, own_text: str) -> tuple[str, dict]:
+        """`derive` (Final B'): this config's file derived from another config's file (`derive.from`, Final A) whose
+        core settings are identical (config_core) except the per-scanner MT constants (Final A's J4):
+            MT  <- this pipeline's own MT on the `derive.groups` rows;
+            PA  <- PA_from + w (asin(k MT_own / FL) - asin(k MT_from / FL)), rounded to the output decimals
+                   (the coupling term of rules 3-4 recomputed on the own MT, w / k of pa_head.coupling_pull);
+            every other cell is copied from the `from` file.
+        This is exactly how the scored Final B' file was made from KG0. It equals this config's own post rules
+        (coupling on the own MT computed directly) up to the 4-decimal rounding of the intermediate file: the build
+        checks that every other cell is identical and that the PA cells differ by at most derive.max_vs_direct."""
+        dv = self.cfg["derive"]
+        if dv.get("rule") != "recouple_own_mt":
+            raise NotImplementedError(f"derive.rule {dv.get('rule')!r}")
+        r = self.cfg["_resolved"]
+        src = load_config(Path(r["file"]).parent / dv["from"], overrides=r.get("overrides") or None,
+                          sets=r.get("sets") or None)
+        a, b = config_core(src), config_core(self.cfg)
+        if a != b:
+            diff = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+            raise ValueError(f"derive.from {dv['from']} differs from this config outside the MT constants: {diff}")
+        text_from, info_from = Assembler(src, self.R).submission()
+        A, own = from_text(text_from), from_text(own_text)
+        ids = self.test_ids()
+        g = self.layout().loc[A.index, "group"].astype(str)
+        m = g.isin(self.expand_groups(dv["groups"]))
+        cp = self.cfg["pa_head"]["coupling_pull"]
+        w, k = float(cp["weight"]), float(cp["k"])
+        D = A.copy()
+        D.loc[m, "mt_mm"] = own.loc[m, "mt_mm"]
+        new = A["pa_deg"] + w * (coupling_pa(D["mt_mm"], A["fl_mm"], k, -1) - coupling_pa(A["mt_mm"], A["fl_mm"], k, -1))
+        full = A["pa_deg"].copy()
+        full[m] = new[m]
+        D.loc[m, "pa_deg"] = self._finish(A.assign(pa_deg=full), clip_median=False, roundtrip=False).loc[m, "pa_deg"]
+        D = from_text(to_text(D, ids))
+        dd = (D - own.reindex(D.index)).abs()
+        pa_cells = m.to_numpy()[:, None] & (np.array(C3) == "pa_deg")[None, :]
+        other = float(np.nanmax(np.where(pa_cells, 0.0, dd.to_numpy())))
+        vs_direct = float(dd.loc[m, "pa_deg"].max())
+        tol = float(dv["max_vs_direct"])
+        info = dict(rule=dv["rule"], source=dict(config=src["_resolved"]["file"], name=src.get("name"),
+                                                 sha256=sha256_text(text_from), offsets=info_from.get("offsets")),
+                    groups=sorted(set(g[m])), rows=int(m.sum()),
+                    mean_change_vs_source={grp: {c: round(float((D.loc[g == grp, c] - A.loc[g == grp, c]).mean()), 4)
+                                                 for c in ("pa_deg", "mt_mm")} for grp in sorted(set(g[m]))},
+                    cells_changed_vs_source=sorted({f"{grp}|{SHORT[c]}" for c in C3 for grp in
+                                                    set(g[(D[c] - A[c]).abs() > 0])}),
+                    max_abs_vs_direct_pa=vs_direct, rows_differing_from_direct=int((dd.loc[m, "pa_deg"] > 0).sum()),
+                    max_abs_vs_direct_other=other, max_vs_direct=tol)
+        if other != 0.0 or vs_direct > tol + 1e-9:
+            raise RuntimeError(f"derive: the derived file departs from this config's own post rules: other cells "
+                               f"{other}, Telemed PA {vs_direct} (allowed {tol})")
+        return to_text(D, ids), info
 
     def geometry_factor(self, grp: str) -> float:
         """The declared per-scanner factor; with factor_source detect_confirm, the image detector is run on every
@@ -798,12 +961,15 @@ class Assembler:
         S = from_text(text)
         rules_active = any(s["space"] != "image" for s in self.cfg["geometry_space"]["scanners"].values()) or \
             any(float(v or 0.0) != 0.0 for v in self.cfg["mt_edge"]["constant_mm"].values()) or \
-            float(self.cfg["pa_head"]["coupling_pull"]["weight"]) != 0.0
+            float(self.cfg["pa_head"]["coupling_pull"]["weight"]) != 0.0 or \
+            bool((self.cfg["pa_head"].get("telemed_head") or {}).get("enabled", False))
         info = dict(lb_constants=lbc, offsets=self.offsets())
         if rules_active:
             state, pr = self.post_rules(S)
             text = to_text(state, self.test_ids())
             info.update(post_rules=pr)
+        if (self.cfg.get("derive") or {}).get("enabled", False):
+            text, info["derive"] = self.derive(text)
         info["geometry_factors"] = {k: {kk: vv for kk, vv in v.items() if kk != "per_image"}
                                     for k, v in self.factor_detail.items()}
         info["geometry_factors_per_image"] = {k: v.get("per_image") for k, v in self.factor_detail.items()}

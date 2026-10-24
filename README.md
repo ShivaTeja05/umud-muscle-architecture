@@ -12,17 +12,19 @@ License: GPL-3.0-only (`LICENSE`). Third-party code, models, data and tools: `TH
 
 | | file | public LB | what it is |
 |---|---|---|---|
-| **Final A** | `configs/final_A.yaml` -> `final_A.csv` (sha256 `364e9cc3...afaa`) | **0.23297** | Final B + Telemed MT -0.5 mm (J4, a declared LB-chosen constant). Byte-identical to the scored file `02_K25b_B1J4.csv`. |
-| **Final B** | `configs/final_B.yaml` -> `final_B.csv` (sha256 `30512ad2...9f22`) | not scored; predicted 0.2354 (see below) | the same pipeline without any LB-tuned continuous constant |
-| base | `configs/C18.yaml` -> `C18.csv` (sha256 `3f9379f7...633d`) | 0.33526 | image-space base of both finals; byte-identical to the scored C18 file |
+| **Final A** | `configs/final_A.yaml` -> `final_A.csv` (sha256 `5d216fda...32bf`) | **0.23041** | KG0: K25b with the Telemed PA head G0 (below). Contains the declared LB-chosen Telemed MT -0.5 mm (J4). Byte-identical to the scored file `KG0_K25b.csv`. |
+| **Final B** | `configs/final_B.yaml` -> `final_B.csv` (sha256 `3b95665c...66db`) | 0.23322 | B': Final A without J4, i.e. without any LB-tuned continuous constant. Byte-identical to the scored file `FinalBprime_KG0_noJ4.csv`. |
+| previous best | `configs/K25b.yaml` -> `K25b.csv` (sha256 `364e9cc3...afaa`) | 0.23297 | Final A before the G0 head. Byte-identical to the scored file `02_K25b_B1J4.csv`. |
+| base | `configs/C18.yaml` -> `C18.csv` (sha256 `3f9379f7...633d`) | 0.33526 | image-space base of every final; byte-identical to the scored C18 file |
 
-**Final B prediction.** The public score is exactly additive over disjoint (scanner group x component) cells. J4 changes
-only the Telemed MT cells and K25b only the Telemed PA cells (checked by the tests), so B1 plus Final A's Telemed PA
-cells would score exactly 0.23297 + (0.23931 - 0.23693) = **0.23535**. Final B differs from that file in the Telemed PA
-cells only: its coupling pull sees the pipeline's own MT (no -0.5 mm), which raises the Telemed PA by a further 0.08 deg
-on average (distance 0.0020). So LB(Final B) = 0.23535 + d, with |d| <= 0.0048 (the largest change any 102-row public
-subset could see). The extra pull goes in the direction that won (K25b gained 0.0040 for a 0.0096 move), so d is more
-likely negative (about -0.0008 at K25b's efficiency).
+**Final B.** Final B is Final A with the J4 cells removed: the Telemed MT goes back to the pipeline's own MT (no
+-0.5 mm). The Telemed PA rule contains the coupling term 0.25 asin(1.067 MT / FL), which reads MT, so removing J4
+also moves the Telemed PA: PA_B = PA_A + 0.25 (asin(1.067 MT_B / FL) - asin(1.067 MT_A / FL)), +0.08 deg on average.
+Every other cell equals Final A. The build derives the file from Final A's file exactly as the scored file was made
+(`derive` in `configs/final_B.yaml`). It also computes the same rules directly on the own MT and checks that the two
+agree: all other cells identically, the Telemed PA cells within one unit of the 4th decimal (the rounding of the
+intermediate file). The previous Final B (K25b without J4, sha256 `30512ad2...9f22`, never scored) is rebuilt by the
+tests as a K25b variant.
 
 ## Method summary
 
@@ -61,6 +63,19 @@ likely negative (about -0.0008 at K25b's efficiency).
    - **Final A only:** Telemed MT -0.5 mm;
    - **Telemed PA coupling pull:** PA += 0.25 (asin(1.067 MT / FL) - (PA - 0.3286)), with the expert coupling
      FL sin(PA) = 1.067 MT measured on the OSF benchmarks;
+   - **Telemed PA head G0** (KG0, both finals): on the Telemed clips the PA head becomes the learned-field angle in the
+     deep strip (4-30 % of MT above the deep aponeurosis) measured against the *local* deep tangent (`pa_fd_strip`)
+     wherever the insertion strip (2-12 % of MT) is steeper than the fused head (s = `pa_fd_ins` - fusF > 0, a sign
+     test); elsewhere the head stays fusF. The Telemed PA is then rebuilt with the unchanged recipe (confidence rule
+     toward the scanner-group median, clip median, + 0.3286 deg) and the unchanged coupling term (lambda 0.25 on the
+     MT / FL of the rules above). The gate is on for 112 of 140 Telemed images, and the Telemed PA rises by
+     0.83 deg on average. The Telemed FL is not rebuilt: it stays at the fusF-based PA. Every input is a column of
+     the per-image cache. The build checks that the written-out recipe reproduces the pipeline's own fusF Telemed PA
+     (within 1e-4 deg; the tolerance is 2e-4). Why: on the expert benchmarks, in the geometry regime of the test
+     Telemed clips (fascicles steepening toward the insertion, curved deep aponeurosis), fusF reads 0.83 deg low and
+     `pa_fd_strip` is unbiased. This also matches the protocol (insertion angle against the deep aponeurosis at the
+     insertion). Details: `artifacts/candidates_v10/manifest.md` (not in git);
+   - **Final B only:** derived from Final A's file with the J4 cells removed (see above);
    - bounds PA [5, 45], FL [30, 200], MT [10, 50] (post-rule values kept 1e-3 inside).
 
 ## Reproduce Final A / B
@@ -78,13 +93,15 @@ output, listed with their sha256 in `configs/C18.yaml` `inputs:`) and the compet
 ```bash
 uv run umud-run --config configs/final_A.yaml --stage build   # -> artifacts/final/final_A/final_A.csv (+ _report.json)
 uv run umud-run --config configs/final_B.yaml --stage build   # -> artifacts/final/final_B/final_B.csv
+uv run umud-run --config configs/K25b.yaml    --stage build   # the previous best file (Final A before the G0 head)
 uv run umud-run --config configs/C18.yaml     --stage build   # the base file
 # equivalently: PYTHONPATH=src python scripts/umud_run.py --config configs/final_A.yaml --stage build
 ```
 
 The build re-derives the layout table from the test images (scanner groups, clips), runs the factor detectors on the Lumify / Siemens
 images, re-estimates the rater offsets from the OSF xlsx, validates the CSV (`scripts/validate_submission.py`) and
-compares it with the reference file named in the config (Final A, C18: byte-identical; the exit code is 3 if not).
+compares it with the reference file named in the config (every config: byte-identical; the exit code is 3 if not).
+The Final B build also builds Final A in the same process (it is derived from it).
 
 **End to end from the raw images.**
 
@@ -106,10 +123,13 @@ differ by <= 1.4e-5 mm; the build is deterministic on one platform.
 
 `configs/C18.yaml` holds every choice and constant of the base pipeline (map sources and thresholds, the geometry
 configuration, PA / FL heads, shrinkage, error model, rater rule, layout / clip detection, output format) plus the
-sha256 of every input and of every code file the build calls. `final_B.yaml` extends it; `final_A.yaml` extends
-`final_B.yaml` and changes only the Telemed MT constant (tested). The runner refuses to build when a pinned file
-changed, when a code default drifted from the config, when an `lb_constants` target does not hold its registered value
-on its grid, or when a factor detector does not confirm its factor. Re-pin after an intended change:
+sha256 of every input and of every code file the build calls. `K25b.yaml` extends it (native geometry, J4, coupling
+pull); `final_A.yaml` extends `K25b.yaml` and only switches on the G0 Telemed PA head (`pa_head.telemed_head`);
+`final_B.yaml` extends `final_A.yaml` and only removes the Telemed MT constant, with `derive` (all tested). The runner
+refuses to build when a pinned file changed, when a code default drifted from the config, when an `lb_constants` target
+does not hold its registered value on its grid, when a factor detector does not confirm its factor, when the G0 head's
+written-out PA recipe does not reproduce the pipeline's Telemed PA, or when a `derive` source differs from the config
+beyond the MT constants. Re-pin after an intended change:
 `python tools/pin_config.py configs/C18.yaml`. One-off overrides: `--set key.sub=value`.
 
 ### Tests
@@ -119,11 +139,13 @@ uv run --with pytest pytest -q                          # all tests (about 1.5 m
 uv run --with pytest pytest -q tests/test_final_package.py
 ```
 
-`tests/test_final_package.py` rebuilds Final A, C18 and the intermediate scored files B1 and B1_J4 byte-for-byte from
-the cached per-image tables, checks Final B's cells and the additivity argument above, reproduces seven ledger files
-from single config changes, re-derives the rater rule, re-measures images from the maps, and unit-tests the clip
-detection (synthetic frames and the 28 test clips) and the factor detectors (synthetic discs / triangles and the test
-images). Data-dependent tests skip when `data/` or `artifacts/` is absent.
+`tests/test_final_package.py` rebuilds Final A (KG0), Final B (B'), K25b and C18 byte-for-byte from the cached
+per-image tables. It also rebuilds, as config variants, the intermediate scored files B1 and B1_J4, the previous
+Final B and the G0n contrast file. It checks that Final A is K25b plus the G0 head only (Telemed PA cells), and that
+Final B is Final A without J4 (Telemed MT and PA cells, the coupling-on-own-MT rule). It reproduces seven ledger files
+from single config changes, re-derives the rater rule and re-measures images from the maps. Unit tests cover the G0
+gate (a sign test), the clip detection (synthetic frames and the 28 test clips) and the factor detectors (synthetic
+discs / triangles and the test images). Data-dependent tests skip when `data/` or `artifacts/` is absent.
 
 ## External data and models
 
@@ -150,7 +172,8 @@ clips were probed, no submissions were blended by score, and no submission conta
 | J2: Siemens PA / FL in native geometry, c = 1.125 | `...siemens_juniper.space: physical` | 1152x864 native resolution of the training masks; UI-triangle detector 1.123 | -0.05521 | yes | yes |
 | J3: Telemed 1200x800 stays in image space | `...telemed_artus_1200x800.space: image` | its native transform lost | +0.05413 (rejected) | yes | yes |
 | K25b: Telemed PA coupling pull, lambda = 0.25 | `pa_head.coupling_pull.weight: 0.25` | expert FL sin(PA) / MT = 1.067 (static 1.07, VL 1.067) vs Telemed 0.95-1.02; grid {0, 0.25, 0.5} declared before scoring | -0.00396 | yes | yes |
-| J4: Telemed MT -0.5 mm | `mt_edge.constant_mm.telemed_*: -0.5` | none offline (a hand-picked point of a pre-declared grid {0, -0.25, -0.5, -0.8}) | -0.00238 | **yes (declared LB-chosen constant)** | **no** |
+| KG0: Telemed PA head G0 (deep-strip field angle vs the local deep tangent where the insertion strip is steeper than fusF) | `pa_head.telemed_head.enabled: true` | an offline-justified per-image head. On the 78 expert-labelled benchmark images in the test-Telemed regime, fusF + offset reads 0.83 deg low and the G0 strip angle -0.08 deg; MAE vs the K25 rule -0.28 deg [-0.46, -0.11], over all 445 benchmark images -0.05 deg [-0.09, -0.01]. The gate is a sign test (s > 0); the strip is the v3 `FieldConfig` default and lambda is K25b's 0.25, so there is no LB-tuned constant. The adopt rule was pre-registered and one point was scored | -0.00256 (0.23297 -> 0.23041) | yes | yes |
+| J4: Telemed MT -0.5 mm | `mt_edge.constant_mm.telemed_*: -0.5` | none offline (a hand-picked point of a pre-declared grid {0, -0.25, -0.5, -0.8}) | -0.00238 (B1 -> B1_J4); removing it from KG0: +0.00281 (B') | **yes (declared LB-chosen constant)** | **no** (its coupling-term effect on the Telemed PA is removed too) |
 
 Further declarations: the scanner layout decoder is adapted from AmbrosM's public notebook (Apache-2.0); the metric
 re-implements the organiser's notebook; statistics are pooled across test images (clip medians; shrinkage toward
@@ -159,7 +182,8 @@ scanner x muscle medians of our own predictions); an AI coding assistant helped 
 ## Hardware
 
 - **Laptop** (layout, measurement, build, tests): Apple M3 Pro (11 cores, 36 GB RAM), macOS 26, Python 3.12.11. The
-  build needs < 0.3 GB and about 5 s per final; the full test-set measurement about 6 min.
+  build needs < 0.3 GB and about 10 s per final (Final B about 15 s: it builds Final A too); the full test-set
+  measurement about 6 min.
 - **Kaggle kernels** (training and map inference): NVIDIA Tesla T4 (x2) GPU sessions, CPU sessions for the apo_v2 fix.
 - **RunPod** (1x H100): experiments only (apo_v3, fasc_orient_v2); not part of either final.
 
@@ -167,7 +191,7 @@ scanner x muscle medians of our own predictions); an AI coding assistant helped 
 
 | path | content |
 |---|---|
-| `configs/` | `C18.yaml`, `final_A.yaml`, `final_B.yaml` |
+| `configs/` | `C18.yaml`, `K25b.yaml`, `final_A.yaml`, `final_B.yaml` |
 | `src/umud/run.py` | the `umud-run` pipeline (stages layout / maps / measure / build) |
 | `src/umud/layout.py`, `clips.py`, `native_geometry.py` | layout table, clip detection, native-geometry factors and transform |
 | `src/umud/geometry.py`, `geometry_v2.py`, `shrinkage.py`, `muscle_label.py`, `metric.py` | measurement, shrinkage, OCR muscle labels, metric |
@@ -180,6 +204,7 @@ scanner x muscle medians of our own predictions); an AI coding assistant helped 
 ## History
 
 Earlier stages (U-Net++ masks with line fits, public LB 0.925; geometry v1 0.467; shrinkage C2 0.390; C12 0.377; C18
-0.335; native geometry B1 0.239; B1_J4 0.237; K25b 0.233) are documented in `research/` and in the research archive
-(`artifacts/legacy_research`, not in git). The research-era builders (`scripts/build_candidates_v7.py`, `_v9.py`,
-`aniso_phys_v9.py`) remain for reference; the finals are rebuilt only by `umud-run`.
+0.335; native geometry B1 0.239; B1_J4 0.237; K25b 0.233; KG0 0.2304; B' 0.2332) are documented in `research/` and in
+the research archive (`artifacts/legacy_research`, not in git). The research-era builders
+(`scripts/build_candidates_v7.py`, `_v9.py`, `aniso_phys_v9.py`) remain for reference, as do the KG0 / B' builders in
+`artifacts/candidates_v10`, `_v11` (not in git). The finals are rebuilt only by `umud-run`.

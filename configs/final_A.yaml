@@ -1,30 +1,37 @@
 # =====================================================================================================
-# Final A -- the best public file (K25b, public LB 0.23297, 2026-10-24).
-#   = Final B (C18 + Lumify / Siemens native geometry + Telemed PA coupling pull 0.25)
-#   + Telemed MT -0.5 mm (J4: an LB-chosen scanner constant, declared; the only difference to Final B in method)
-# The coupling pull sees the shifted MT, exactly as the scored file was built.
+# Final A -- the best public file (KG0, public LB 0.23041, 2026-10-24).
+#   = K25b (C18 + Lumify / Siemens native geometry + Telemed MT -0.5 mm (J4) + Telemed PA coupling pull 0.25)
+#   with the Telemed PA head fusF -> G0: the learned-field angle in the deep strip (4-30 % MT) against the LOCAL deep
+#   tangent wherever the insertion strip is steeper than fusF (s = pa_fd_ins - fusF > 0, a sign test), then the
+#   unchanged PA recipe (confidence rule, clip median, + 0.3286 rater offset) and the unchanged K25 coupling term
+#   (lambda 0.25, on K25b's MT / FL). Only the Telemed PA cells change (FL stays at K25b's).
 #   umud-run --config configs/final_A.yaml --stage build   -> artifacts/final/final_A/final_A.csv
-#   must be byte-identical to artifacts/candidates_v9/submit_2026-10-24/02_K25b_B1J4.csv (sha256 364e9cc3...)
+#   must be byte-identical to artifacts/candidates_v10/KG0_K25b.csv (sha256 5d216fda...)
 # GPL-3.0-only.
 # =====================================================================================================
 schema: umud-config/2
-extends: final_B.yaml
+extends: K25b.yaml
 name: final_A
-description: "Final B + Telemed MT -0.5 mm (J4, declared LB-chosen constant) = the scored K25b file"
+description: "K25b with the Telemed PA head G0 (KG0) = the best public file"
 
 reference:
-  file: ${repo}/artifacts/candidates_v9/submit_2026-10-24/02_K25b_B1J4.csv
-  public_lb: 0.23297
-  sha256: 364e9cc33823fec031a58854a20ff54ba6e71c72921657664926095583c3afaa
+  file: ${repo}/artifacts/candidates_v10/KG0_K25b.csv
+  public_lb: 0.23041
+  sha256: 5d216fdaf1ed6b6e9da95c671e943a75465d4bb8c44f6d4f7ec6ba754ec332bf
   expect: bytes
 
 prediction: null
 
-mt_edge:
-  constant_mm:
-    default: 0.0
-    telemed_artus_1200x800: -0.5
-    telemed_artus_1088x644: -0.5
+pa_head:
+  telemed_head:
+    enabled: true
+    evidence: "artifacts/candidates_v10/manifest.md. Test Telemed clips sit in a regime the benchmarks rarely contain:
+      median s = pa_fd_ins - fusF +1.4 / +2.0 deg (T12 / T10) vs -0.6 .. +0.3 on the benchmarks. On the 78
+      expert-labelled benchmark images in that regime (s > 0.75) fusF + offset reads 0.83 deg low and the K25 rule
+      0.74 deg low; pa_fd_strip (deep strip vs the local tangent) is unbiased (-0.08 deg). KG0 vs the K25 rule:
+      MAE -0.277 deg [-0.456, -0.107] in the regime, -0.050 [-0.090, -0.014] over all 445 benchmark images, no worse
+      on any benchmark. Matches the protocol (insertion angle vs the deep aponeurosis at the insertion). Gate on
+      112 / 140 Telemed images."
 
 lb_constants:
   - name: telemed_fl_shrink
@@ -83,6 +90,17 @@ lb_constants:
     kind: method_choice
     ledger: "K25b 0.23297 vs B1_J4 0.23693 (-0.00396)"
     rationale: "physics coupling FL sin(PA) = 1.067 MT (expert k measured on the OSF benchmarks); pre-declared grid"
+  - name: telemed_pa_head
+    target: pa_head.telemed_head.enabled
+    grid: [false, true]
+    value: true
+    status: adopted
+    kind: method_choice
+    ledger: "KG0 (K25b with the Telemed PA head fusF -> G0) 0.23041 vs K25b 0.23297 (-0.00256); adopt rule
+      pre-registered (d < 0 adopt in both finals; d >= 0 reject and close the head search); one point scored"
+    rationale: "offline-justified per-image head (benchmark regime evidence, see pa_head.telemed_head.evidence); the
+      gate is a sign test (s > 0), the 4-30 % strip is the v3 FieldConfig default set before any Telemed-PA probe,
+      lambda is K25b's 0.25: no LB-tuned constant. G0n (lambda 0) was never scored."
   - name: telemed_mt_offset
     target: [mt_edge.constant_mm.telemed_artus_1200x800, mt_edge.constant_mm.telemed_artus_1088x644]
     grid: [0.0, -0.25, -0.5, -0.8]
@@ -95,6 +113,7 @@ lb_constants:
 declarations:
   - "LB-guided method choices (declared): Telemed FL unshrunk (C18); Lumify and Siemens PA / FL in their native
      square-pixel geometry with fixed per-scanner factors measured from image content (J1, J2); Telemed in image space
-     (J3 rejected); Telemed PA coupling pull lambda = 0.25 on a pre-declared grid (K25b)."
+     (J3 rejected); Telemed PA coupling pull lambda = 0.25 on a pre-declared grid (K25b); Telemed PA head G0 (KG0,
+     offline-justified, sign-test gate, no new constant)."
   - "LB-chosen constant (declared, Final A only): Telemed MT -0.5 mm (J4), a hand-picked point of a pre-declared grid
-     with no offline justification; Final B is the same pipeline without it."
+     with no offline justification; Final B is this file without it."

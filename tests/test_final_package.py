@@ -1,21 +1,25 @@
 """Reproducibility tests of the final package (umud-run, configs/). GPL-3.0-only.
 
-Run (light: one process, CSV caches + a few images, < 0.5 GB RSS, about 2 minutes):
+Run (light: one process, CSV caches + a few images, < 0.5 GB RSS, about 3 minutes):
     uv run --with pytest pytest -q tests/test_final_package.py
 The data-dependent tests skip when data/ or artifacts/ (not in git) are absent.
 
 What is proven
 --------------
-* configs/final_A.yaml rebuilds the best public file 02_K25b_B1J4.csv BYTE-FOR-BYTE from the cached per-image tables
-  (layout and clips from the images, native-geometry factors confirmed by the image detectors, rater offsets
-  re-estimated from the OSF xlsx); configs/C18.yaml rebuilds C18 byte-for-byte; the intermediate scored files B1 and
-  B1_J4 are byte-identical rebuilds of config variants;
-* configs/final_B.yaml is Final A without the LB-only Telemed MT constant: it differs from Final A only in the
-  Telemed MT and PA cells, J4 and K25b touch disjoint cells, and the exact-additive prediction is checked;
+* all four configs rebuild their scored files BYTE-FOR-BYTE from the cached per-image tables (layout and clips from
+  the images, native-geometry factors confirmed by the image detectors, rater offsets re-estimated from the OSF xlsx):
+  configs/final_A.yaml -> KG0_K25b.csv (best public file), configs/final_B.yaml -> FinalBprime_KG0_noJ4.csv,
+  configs/K25b.yaml -> 02_K25b_B1J4.csv, configs/C18.yaml -> C18; the intermediate scored files B1, B1_J4, the
+  previous Final B and the G0n contrast file are byte-identical rebuilds of config variants;
+* Final A is K25b plus the G0 Telemed PA head only (it changes only the Telemed PA cells; the written-out PA recipe
+  reproduces the pipeline's Telemed PA, the gate is the sign test); Final B is Final A without the LB-only Telemed MT
+  constant: it differs from Final A only in the Telemed MT and PA cells, and its Telemed PA is Final A's with the
+  coupling term recomputed on its own MT (equal to the direct computation up to the 4-decimal rounding);
 * clips are found from image content and are exactly the 28 Telemed clips of 5 frames; the layout table equals the
   research-era table; the factor detectors recover synthetic factors and confirm the declared ones on the images;
 * the measure stage re-measures images from the maps identically to the caches; the maps stage writes the kernels;
-* pinned inputs / code, the LB-constant registry and the factor detectors refuse silent drift.
+* pinned inputs / code, the LB-constant registry, the factor detectors, the PA-recipe check and the derive guard
+  refuse silent drift.
 """
 from __future__ import annotations
 
@@ -48,8 +52,20 @@ SCORED = {
     "B1": (ART / "candidates_v8/submit_2026-10-23b/B1_C18_J1_J2.csv", 0.23931),
     "B1_J4": (ART / "candidates_v8/submit_2026-10-23b/B1_J4.csv", 0.23693),
     "K25b": (ART / "candidates_v9/submit_2026-10-24/02_K25b_B1J4.csv", 0.23297),
+    "KG0": (ART / "candidates_v10/KG0_K25b.csv", 0.23041),
+    "Bprime": (ART / "candidates_v11/FinalBprime_KG0_noJ4.csv", 0.23322),
 }
+G0N = ART / "candidates_v10/G0n_K25b.csv"            # built, never scored (the lambda contrast of KG0)
 K25B_SHA256 = "364e9cc33823fec031a58854a20ff54ba6e71c72921657664926095583c3afaa"
+KG0_SHA256 = "5d216fdaf1ed6b6e9da95c671e943a75465d4bb8c44f6d4f7ec6ba754ec332bf"
+BPRIME_SHA256 = "3b95665c076566cc806bcec5b09313bec40d781476fb5fe7df024f51841366db"
+OLD_FINAL_B_SHA256 = "30512ad21b1b5bc8c515a281c36a245a376f9c3858ba2e126e40f82349879f22"   # K25b without J4
+FINALS = ("C18", "K25b", "final_A", "final_B")
+EXPECT = {"C18": SCORED["C18"][0], "K25b": SCORED["K25b"][0], "final_A": SCORED["KG0"][0],
+          "final_B": SCORED["Bprime"][0]}
+NO_J4 = {"mt_edge": {"constant_mm": {"telemed_artus_1200x800": 0.0, "telemed_artus_1088x644": 0.0}}}
+TELEMED_CELLS = {"telemed_artus_1200x800|pa", "telemed_artus_1088x644|pa"}
+J4_CELLS = {"telemed_artus_1200x800|mt", "telemed_artus_1088x644|mt"}
 TOL = 1e-4
 HAVE_DATA = TEST_DIR.exists() and (ART / "candidates_v3/cache/test__v2.csv").exists()
 needs_data = pytest.mark.skipif(not HAVE_DATA, reason="competition data / per-image caches not present")
@@ -97,13 +113,20 @@ def layout():
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """C18, Final B and Final A through stage_build (reports, validation)."""
+    """C18, K25b, Final A and Final B through stage_build (reports, validation)."""
     out = {}
-    for name in ("C18", "final_B", "final_A"):
+    for name in FINALS:
         d = tmp_path_factory.mktemp(name)
         rep = ur.stage_build(ur.load_config(CFG / f"{name}.yaml"), d)
         out[name] = (rep, Path(rep["file"]))
     return out
+
+
+@pytest.fixture(scope="module")
+def old_final_B():
+    """The previous Final B: K25b without J4 (its coupling pull on the own MT, computed directly)."""
+    text, _ = build_text(variant(CFG / "K25b.yaml", NO_J4))
+    return text
 
 
 # =================================================================================== unit: clip detection
@@ -213,6 +236,34 @@ def test_detector_refuses_wrong_declared_factor(layout):
         ng.confirm_factor([TEST_DIR / i for i in ids], "lumify_p_disc", 0.80, 0.01)
 
 
+# =================================================================================== unit: G0 head, coupling
+def test_g0_head_gate_is_a_sign_test():
+    fused = pd.Series([10.0, 10.0, 10.0, 10.0, 10.0, 12.0])
+    ins = pd.Series([10.5, 9.5, 10.0, np.nan, 11.0, 12.0 + 1e-9])
+    strip = pd.Series([13.0, 13.0, 13.0, 13.0, np.nan, 11.0])
+    head, gate = ur.g0_head(fused, ins, strip)
+    #               steeper  flatter  equal   no ins  no strip  barely steeper (no threshold)
+    assert gate.tolist() == [True, False, False, False, True, True]
+    assert head.tolist() == [13.0, 10.0, 10.0, 10.0, 10.0, 11.0]
+
+
+def test_coupling_pa():
+    mt, fl = pd.Series([20.0, 30.0, 60.0]), pd.Series([80.0, 60.0, 50.0])
+    c = ur.coupling_pa(mt, fl, 1.067)
+    assert abs(c[0] - np.degrees(np.arcsin(1.067 * 0.25))) < 1e-12
+    assert c[2] == 90.0                                                   # k MT / FL > 1 clips at 90 deg
+    assert (ur.coupling_pa(mt, fl, 1.067, -1) == c).all()
+
+
+def test_config_core_ignores_only_names_registry_and_mt_constants():
+    a, b = ur.load_config(CFG / "final_A.yaml"), ur.load_config(CFG / "final_B.yaml")
+    assert ur.config_core(a) == ur.config_core(b)
+    b["pa_head"]["coupling_pull"]["k"] = 1.07
+    assert ur.config_core(a) != ur.config_core(b)
+    k = ur.load_config(CFG / "K25b.yaml")
+    assert ur.config_core(k) != ur.config_core(a)                        # the G0 head is not an MT constant
+
+
 # =================================================================================== layout + clips on the test set
 @needs_data
 def test_layout_from_images_equals_research_table_and_clips(tmp_path):
@@ -238,7 +289,7 @@ def test_layout_from_images_equals_research_table_and_clips(tmp_path):
 
 
 # =================================================================================== config structure
-@pytest.mark.parametrize("name", ["C18", "final_A", "final_B"])
+@pytest.mark.parametrize("name", FINALS)
 def test_config_blocks(name):
     cfg = ur.load_config(CFG / f"{name}.yaml")
     for b in ur.REQUIRED_BLOCKS:
@@ -250,20 +301,39 @@ def test_config_blocks(name):
     # when the repository itself is cloned there.
     raw = (CFG / f"{name}.yaml").read_text(encoding="utf-8")
     assert "/private/tmp" not in raw and "scratchpad" not in raw
+    ref = cfg["reference"]
+    assert ref["expect"] == "bytes" and ref["sha256"] and Path(ref["file"]).name == EXPECT[name].name
 
 
-def test_final_A_is_final_B_plus_the_telemed_mt_constant_only():
-    a, b = ur.strip_docs(ur.load_config(CFG / "final_A.yaml")), ur.strip_docs(ur.load_config(CFG / "final_B.yaml"))
-    for d in (a, b):
-        for k in ("name", "reference", "lb_constants", "output", "paths"):
-            d.pop(k, None)
-    assert a.pop("mt_edge")["constant_mm"] == {"default": 0.0, "telemed_artus_1200x800": -0.5,
-                                               "telemed_artus_1088x644": -0.5}
-    assert b.pop("mt_edge")["constant_mm"] == {"default": 0.0, "telemed_artus_1200x800": 0.0,
-                                               "telemed_artus_1088x644": 0.0}
-    assert a == b
-    la = {e["name"]: e for e in ur.load_config(CFG / "final_A.yaml")["lb_constants"]}
-    lb = {e["name"]: e for e in ur.load_config(CFG / "final_B.yaml")["lb_constants"]}
+def _registry(name: str) -> dict:
+    return {e["name"]: e for e in ur.load_config(CFG / f"{name}.yaml")["lb_constants"]}
+
+
+def test_final_A_is_K25b_plus_the_G0_head_only():
+    a, k = ur.strip_docs(ur.load_config(CFG / "final_A.yaml")), ur.strip_docs(ur.load_config(CFG / "K25b.yaml"))
+    for d in (a, k):
+        for key in ("name", "reference", "lb_constants", "output", "paths"):
+            d.pop(key, None)
+    ha, hk = a["pa_head"].pop("telemed_head"), k["pa_head"].pop("telemed_head")
+    assert ha.pop("enabled") is True and hk.pop("enabled") is False
+    assert ha == hk == {"head": "G0", "groups": ["telemed"], "gate_column": "pa_fd_ins", "strip_column": "pa_fd_strip",
+                        "coupling": True, "check_tol": 2.0e-4}
+    assert a == k
+    la, lk = _registry("final_A"), _registry("K25b")
+    assert set(la) - set(lk) == {"telemed_pa_head"} and not set(lk) - set(la)
+    assert all(la[n]["value"] == lk[n]["value"] for n in lk)
+    e = la["telemed_pa_head"]
+    assert e["target"] == "pa_head.telemed_head.enabled" and e["value"] is True and e["kind"] == "method_choice"
+
+
+def test_final_B_is_final_A_without_the_telemed_mt_constant():
+    a, b = ur.load_config(CFG / "final_A.yaml"), ur.load_config(CFG / "final_B.yaml")
+    assert ur.config_core(a) == ur.config_core(b)
+    assert a["mt_edge"]["constant_mm"] == {"default": 0.0, "telemed_artus_1200x800": -0.5, "telemed_artus_1088x644": -0.5}
+    assert b["mt_edge"]["constant_mm"] == {"default": 0.0, "telemed_artus_1200x800": 0.0, "telemed_artus_1088x644": 0.0}
+    assert b["derive"]["enabled"] and b["derive"]["from"] == "final_A.yaml" and b["derive"]["rule"] == "recouple_own_mt"
+    assert not (a.get("derive") or {}).get("enabled", False)
+    la, lb = _registry("final_A"), _registry("final_B")
     assert set(la) == set(lb)
     assert [n for n in la if la[n]["value"] != lb[n]["value"]] == ["telemed_mt_offset"]
     assert lb["telemed_mt_offset"]["value"] == 0.0 and la["telemed_mt_offset"]["value"] == -0.5
@@ -271,7 +341,7 @@ def test_final_A_is_final_B_plus_the_telemed_mt_constant_only():
 
 @needs_data
 def test_pinned_inputs_and_code_unchanged():
-    for name in ("C18", "final_A", "final_B"):
+    for name in FINALS:
         cfg = ur.load_config(CFG / f"{name}.yaml")
         rows = ur.check_hashes(cfg["inputs"]) + ur.check_hashes(cfg["code"])
         assert all(r["ok"] for r in rows) and len(cfg["inputs"]) >= 12 and len(cfg["code"]) >= 14
@@ -279,21 +349,26 @@ def test_pinned_inputs_and_code_unchanged():
 
 # =================================================================================== the reproductions
 @needs_data
-def test_C18_rebuilt_byte_for_byte(built):
-    rep, path = built["C18"]
-    assert path.read_bytes() == SCORED["C18"][0].read_bytes()
-    assert rep["reference"]["bytes_identical"] and rep["validate"].startswith("Valid submission")
+@pytest.mark.parametrize("name", FINALS)
+def test_configs_rebuild_their_scored_files_byte_for_byte(built, name):
+    rep, path = built[name]
+    assert path.read_bytes() == EXPECT[name].read_bytes()
+    assert rep["reference"]["bytes_identical"] and rep["reference"]["official_distance"] == 0.0
+    assert rep["reference_sha256"]["ok"] and rep["validate"].startswith("Valid submission")
     assert rep["pins_ok"] and rep["peak_rss_gb"] < 1.5
+    assert rep["layout"]["n_clips"] == 28 and rep["layout"]["frames_per_clip"] == [5]
 
 
 @needs_data
-def test_final_A_rebuilds_K25b_byte_for_byte(built):
-    rep, path = built["final_A"]
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == K25B_SHA256
-    assert path.read_bytes() == SCORED["K25b"][0].read_bytes()
-    assert rep["reference"]["bytes_identical"] and rep["reference"]["official_distance"] == 0.0
-    assert rep["reference_sha256"]["ok"] and rep["validate"].startswith("Valid submission")
-    assert rep["layout"]["n_clips"] == 28 and rep["layout"]["frames_per_clip"] == [5]
+def test_final_shas():
+    assert hashlib.sha256(SCORED["K25b"][0].read_bytes()).hexdigest() == K25B_SHA256
+    assert hashlib.sha256(SCORED["KG0"][0].read_bytes()).hexdigest() == KG0_SHA256
+    assert hashlib.sha256(SCORED["Bprime"][0].read_bytes()).hexdigest() == BPRIME_SHA256
+
+
+@needs_data
+def test_K25b_build_steps(built):
+    rep, _ = built["K25b"]
     # factors confirmed by the detectors on every image of the group; offsets re-estimated from the xlsx
     gf = rep["geometry_factors"]
     assert gf["philips_lumify"]["confirmed"] and gf["philips_lumify"]["n"] == 58
@@ -305,49 +380,95 @@ def test_final_A_rebuilds_K25b_byte_for_byte(built):
 
 
 @needs_data
-@pytest.mark.parametrize("name,base,ov", [
-    ("B1", "final_B", {"pa_head": {"coupling_pull": {"weight": 0.0}}}),
-    ("B1_J4", "final_A", {"pa_head": {"coupling_pull": {"weight": 0.0}}}),
-])
-def test_intermediate_scored_files_rebuilt_byte_for_byte(name, base, ov):
-    text, _ = build_text(variant(CFG / f"{base}.yaml", ov))
-    assert text.encode() == SCORED[name][0].read_bytes()
+def test_final_A_G0_head_step(built):
+    rep, _ = built["final_A"]
+    assert hashlib.sha256(built["final_A"][1].read_bytes()).hexdigest() == KG0_SHA256
+    steps = rep["post_rules"]["steps"]
+    assert [s["rule"] for s in steps] == ["native_geometry", "native_geometry", "mt_constant", "coupling_pull",
+                                          "telemed_head"]
+    st = steps[-1]
+    assert st["head"] == "G0" and st["coupling"] and st["coupling_weight"] == 0.25 and st["k"] == 1.067
+    assert st["offset_deg"] == 0.3286                                    # round(rater pa_add, 4), no new constant
+    assert st["rows"] == 140 and st["gate_on"] == 112
+    assert st["gate_on_by_group"] == {"telemed_artus_1088x644": 39, "telemed_artus_1200x800": 73}
+    assert st["rows_changed_vs_rule3"] == 135                            # clip 21: ungated, confidence 1
+    assert max(st["recipe_check_max_abs"].values()) < 1e-4 and set(st["recipe_check_max_abs"]) == {"rules12", "rule3"}
+    assert st["mean_change_vs_rule3_deg"] == {"telemed_artus_1088x644": 0.8138, "telemed_artus_1200x800": 0.8349}
+    cl = rep["post_rules"]["cells"]
+    for c in TELEMED_CELLS:
+        assert cl[c] == ["telemed_head(G0, coupling=True)"]               # supersedes the K25 pull on its cells
 
 
 @needs_data
-def test_final_B_cells_and_additivity(built, layout):
-    A, B = read(built["final_A"][1]), read(built["final_B"][1])
+def test_final_B_derive_step(built):
+    rep, _ = built["final_B"]
+    assert hashlib.sha256(built["final_B"][1].read_bytes()).hexdigest() == BPRIME_SHA256
+    d = rep["derive"]
+    assert d["rule"] == "recouple_own_mt" and d["source"]["name"] == "final_A"
+    assert d["source"]["sha256"] == KG0_SHA256                            # derived from the Final A file itself
+    assert set(d["cells_changed_vs_source"]) == TELEMED_CELLS | J4_CELLS and d["rows"] == 140
+    assert d["max_abs_vs_direct_other"] == 0.0 and d["max_abs_vs_direct_pa"] <= 1e-4 + 1e-9
+    assert 0 < d["rows_differing_from_direct"] < 140
+    for grp, v in d["mean_change_vs_source"].items():
+        assert v["mt_mm"] == 0.5 and 0.05 < v["pa_deg"] < 0.12, (grp, v)
+    # Final B's own post rules (G0 head + coupling on the own MT, direct) were computed and checked
+    assert [s["rule"] for s in rep["post_rules"]["steps"]] == ["native_geometry", "native_geometry", "coupling_pull",
+                                                                 "telemed_head"]
+
+
+@needs_data
+@pytest.mark.parametrize("name,base,ov,expect", [
+    ("B1", "K25b", {**NO_J4, "pa_head": {"coupling_pull": {"weight": 0.0}}}, SCORED["B1"][0]),
+    ("B1_J4", "K25b", {"pa_head": {"coupling_pull": {"weight": 0.0}}}, SCORED["B1_J4"][0]),
+    ("K25b_from_final_A", "final_A", {"pa_head": {"telemed_head": {"enabled": False}}}, SCORED["K25b"][0]),
+    ("G0n", "final_A", {"pa_head": {"telemed_head": {"coupling": False}}}, G0N),
+])
+def test_config_variants_rebuild_scored_and_built_files_byte_for_byte(name, base, ov, expect):
+    if not expect.exists():
+        pytest.skip(f"{expect} not present")
+    text, _ = build_text(variant(CFG / f"{base}.yaml", ov))
+    assert text.encode() == expect.read_bytes(), name
+
+
+@needs_data
+def test_previous_final_B_is_K25b_without_J4(old_final_B):
+    assert hashlib.sha256(old_final_B.encode()).hexdigest() == OLD_FINAL_B_SHA256
+
+
+@needs_data
+def test_finals_cells_and_rules(built, layout, old_final_B):
+    A, B, K = (read(built[n][1]) for n in ("final_A", "final_B", "K25b"))
     B1, B1J4, C18 = (read(SCORED[k][0]) for k in ("B1", "B1_J4", "C18"))
     tel = layout.loc[A.index, "group"].str.startswith("telemed")
-    j4 = cells(B1J4, B1, layout)
-    k25 = cells(A, B1J4, layout)
-    assert set(j4) == {"telemed_artus_1200x800|mt", "telemed_artus_1088x644|mt"}
-    assert set(k25) == {"telemed_artus_1200x800|pa", "telemed_artus_1088x644|pa"}
-    assert not set(j4) & set(k25)                                        # J4 and K25b touch disjoint cells
-    assert set(cells(B, B1, layout)) == set(k25)                         # Final B = B1 + its own Telemed PA
-    assert set(cells(B, A, layout)) == set(j4) | set(k25)
-    assert (B.loc[tel, "mt_mm"] == C18.loc[tel, "mt_mm"]).all()          # no MT constant in Final B
-    # the exact-additive variant (B1 + Final A's Telemed PA): public score 0.23297 + (0.23931 - 0.23693)
-    Bii = B1.copy()
-    Bii.loc[tel, "pa_deg"] = A.loc[tel, "pa_deg"]
-    assert set(cells(Bii, A, layout)) == set(j4)
-    pred = SCORED["K25b"][1] + (SCORED["B1"][1] - SCORED["B1_J4"][1])
-    assert round(pred, 5) == 0.23535
-    # Final B differs from that variant on TEL.pa only (coupling with MT = C18 MT instead of C18 - 0.5)
-    d = (B.loc[tel, "pa_deg"] - Bii.loc[tel, "pa_deg"])
-    assert (d > 0).all() and 0.05 < d.mean() < 0.12
-    per = np.mean(np.stack([(B[c] - Bii[c]).abs().to_numpy() / ur.TAU[c] for c in C3], 1), 1)
-    assert abs(per.mean() - 0.00204) < 5e-5
-    assert np.sort(per)[::-1][:102].mean() < 0.005                      # |LB(Final B) - 0.23535| bound
-    rep = built["final_B"][0]
-    assert rep["validate"].startswith("Valid submission") and "reference" not in rep
-    assert rep["reference_sha256"]["ok"]                                # Final B is reproduced exactly
+    j4, k25 = cells(B1J4, B1, layout), cells(K, B1J4, layout)
+    assert set(j4) == J4_CELLS and set(k25) == TELEMED_CELLS             # J4 and K25b touch disjoint cells
+    # Final A = K25b + the G0 head: Telemed PA only; Telemed FL stays at K25b's (built at the fusF PA)
+    assert cells(A, K, layout) == {"telemed_artus_1200x800|pa": 85, "telemed_artus_1088x644|pa": 50}
+    assert (A["fl_mm"] == K["fl_mm"]).all() and (A["mt_mm"] == K["mt_mm"]).all()
+    d = (A.loc[tel, "pa_deg"] - K.loc[tel, "pa_deg"])
+    assert (d >= 0).all() and 0.8 < d.mean() < 0.85
+    # Final B = Final A without J4: Telemed MT back to C18's, Telemed PA re-coupled on that MT; nothing else moves
+    assert set(cells(B, A, layout)) == J4_CELLS | TELEMED_CELLS
+    assert (B.loc[tel, "mt_mm"] == C18.loc[tel, "mt_mm"]).all() and (A.loc[tel, "mt_mm"] == B1J4.loc[tel, "mt_mm"]).all()
+    assert (B["fl_mm"] == A["fl_mm"]).all() and (B.loc[~tel] == A.loc[~tel]).all().all()
+
+    def a(mt, fl):
+        return np.degrees(np.arcsin(np.clip(1.067 * mt / fl, -1, 1)))
+    rule = A["pa_deg"] + 0.25 * (a(B["mt_mm"], A["fl_mm"]) - a(A["mt_mm"], A["fl_mm"]))
+    assert float((rule - B["pa_deg"])[tel].abs().max()) <= 5e-5 + 1e-9
+    # the same rule maps K25b to the previous Final B (coupling on the own MT, computed directly) within 2e-4
+    oB = frame(old_final_B)
+    rule_old = K["pa_deg"] + 0.25 * (a(oB["mt_mm"], K["fl_mm"]) - a(K["mt_mm"], K["fl_mm"]))
+    assert float((rule_old - oB["pa_deg"])[tel].abs().max()) <= 2e-4
+    assert set(cells(oB, K, layout)) == J4_CELLS | TELEMED_CELLS
+    # Final B is the scored B' file; LB delta to Final A
+    assert round(SCORED["Bprime"][1] - SCORED["KG0"][1], 5) == 0.00281
 
 
 @needs_data
 def test_finals_keep_clips_constant(built, layout):
     m = layout["clip"] >= 0
-    for name in ("final_A", "final_B", "C18"):
+    for name in FINALS:
         X = read(built[name][1])
         for c in C3:
             assert (X.loc[m, c].groupby(layout.loc[m, "clip"]).nunique() == 1).all(), (name, c)
@@ -451,13 +572,31 @@ def test_code_and_input_drift_are_detected(tmp_path):
 
 
 @needs_data
-def test_cli_entry_point(tmp_path):
-    r = subprocess.run([sys.executable, str(REPO / "scripts/umud_run.py"), "--config", str(CFG / "final_A.yaml"),
+def test_pa_recipe_check_stops_the_build():
+    """The written-out Telemed PA recipe of the G0 head must reproduce the pipeline's fusF Telemed PA (here: an
+    impossible tolerance)."""
+    cfg = variant(CFG / "final_A.yaml", {"pa_head": {"telemed_head": {"check_tol": 1e-7}}})
+    with pytest.raises(RuntimeError, match="written-out PA recipe"):
+        build_text(cfg)
+
+
+@needs_data
+def test_derive_refuses_a_source_that_differs_beyond_the_mt_constant():
+    cfg = ur.load_config(CFG / "final_B.yaml")
+    cfg["pa_head"]["coupling_pull"]["k"] = 1.07                 # Final B would no longer be Final A without J4
+    with pytest.raises(ValueError, match="outside the MT constants"):
+        ur.Assembler(cfg, ur.bind(cfg)).derive("")
+
+
+@needs_data
+@pytest.mark.parametrize("name,sha", [("final_A", KG0_SHA256), ("final_B", BPRIME_SHA256)])
+def test_cli_entry_point(tmp_path, name, sha):
+    r = subprocess.run([sys.executable, str(REPO / "scripts/umud_run.py"), "--config", str(CFG / f"{name}.yaml"),
                         "--stage", "build", "--out", str(tmp_path)], capture_output=True, text=True,
                        env=dict(os.environ, PYTHONPATH=str(REPO / "src")))
     assert r.returncode == 0, r.stdout + r.stderr
-    assert hashlib.sha256((tmp_path / "final_A.csv").read_bytes()).hexdigest() == K25B_SHA256
-    rep = json.loads((tmp_path / "final_A_report.json").read_text())
+    assert hashlib.sha256((tmp_path / f"{name}.csv").read_bytes()).hexdigest() == sha
+    rep = json.loads((tmp_path / f"{name}_report.json").read_text())
     assert rep["reference"]["bytes_identical"] and rep["pins_ok"]
 
 

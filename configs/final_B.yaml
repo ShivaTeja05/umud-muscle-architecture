@@ -1,40 +1,43 @@
 # =====================================================================================================
-# Final B -- the final pipeline WITHOUT any LB-tuned continuous constant.
-#   = C18 (image-space base)
-#   + native geometry for Philips Lumify (c = 0.844) and Siemens Juniper (c = 1.125) PA / FL   [J1, J2]
-#   + Telemed PA pulled 25 % toward the coupling-implied PA asin(1.067 MT / FL)                  [K25b rule]
-#   Telemed MT is NOT shifted (no J4): Final A = this file + the LB-only Telemed MT -0.5 mm.
-# The coupling rule uses this pipeline's own MT (C18 MT), so the Telemed PA cells differ slightly from Final A's
-# (whose coupling saw MT - 0.5). Predicted public score: see `prediction` below.
+# Final B -- Final A WITHOUT the LB-tuned continuous constant (B', public LB 0.23322, 2026-10-24).
+#   = Final A (KG0) with the J4 cells removed:
+#     Telemed MT = this pipeline's own MT (C18 MT, no -0.5 mm);
+#     Telemed PA = Final A's PA + 0.25 (asin(1.067 MT_B / FL) - asin(1.067 MT_A / FL)): the coupling term of the
+#                  PA rule recomputed on the own MT (the term reads MT, so removing J4 moves it).
+#   Every other cell equals Final A. The file is derived from Final A's file exactly as the scored B' file was
+#   (derive below); the build checks that it equals this config's own post rules (the same G0 head and coupling
+#   computed directly on the own MT) up to the 4-decimal rounding of Final A's file.
 #   umud-run --config configs/final_B.yaml --stage build   -> artifacts/final/final_B/final_B.csv
+#   must be byte-identical to artifacts/candidates_v11/FinalBprime_KG0_noJ4.csv (sha256 3b95665c...)
 # GPL-3.0-only.
 # =====================================================================================================
 schema: umud-config/2
-extends: C18.yaml
+extends: final_A.yaml
 name: final_B
-description: "C18 + Lumify / Siemens native geometry + Telemed PA coupling pull (lambda 0.25); no LB-only constant"
+description: "Final A without the LB-only Telemed MT constant (J4); coupling term recomputed on the own MT"
 
-reference:                        # never scored as such (see prediction); the build must give exactly this file
-  sha256: 30512ad21b1b5bc8c515a281c36a245a376f9c3858ba2e126e40f82349879f22
-  expect: sha256
+reference:
+  file: ${repo}/artifacts/candidates_v11/FinalBprime_KG0_noJ4.csv
+  public_lb: 0.23322
+  sha256: 3b95665c076566cc806bcec5b09313bec40d781476fb5fe7df024f51841366db
+  expect: bytes
 
-prediction:
-  rule: "public LB is exactly additive over disjoint (scanner group x component) cells (MAE per component)"
-  cells_vs_final_A: "TEL.mt (J4 removed) and TEL.pa (coupling recomputed with MT = C18 MT); every other cell equal"
-  exact_additive_variant: "B1 + Final A's Telemed PA cells = 0.23297 + (0.23931 - 0.23693) = 0.23535 (J4 touches
-    only TEL.mt, K25b only TEL.pa; verified disjoint by tests/test_final_package.py)"
-  this_file: "differs from that variant only in TEL.pa (140 rows, mean +0.081 deg: T12 +0.084, T10 +0.076; official
-    distance 0.00204 over all 309 rows). Prediction 0.23535 + d with the hard bound |d| <= 0.0048 (the largest change
-    any 102-row public subset can see; ~0.002 for a typical subset). The extra pull is in the direction that won
-    (K25b gained 0.00396 for a 0.0096 move), so d is more likely <= 0 (about -0.0008 at K25b's efficiency)."
+prediction: null
 
-geometry_space:
-  scanners:
-    siemens_juniper:        {space: physical}
-    philips_lumify:         {space: physical}
+mt_edge:
+  constant_mm:
+    default: 0.0
+    telemed_artus_1200x800: 0.0
+    telemed_artus_1088x644: 0.0
 
-pa_head:
-  coupling_pull: {weight: 0.25, groups: [telemed], k: 1.067}
+derive:                           # post rule 5 (Final B only)
+  enabled: true
+  from: final_A.yaml              # must equal this config except the MT constants (config_core, checked at run)
+  rule: recouple_own_mt
+  groups: [telemed]
+  definition: "MT <- own MT; PA <- PA_A + w (asin(k MT_own / FL) - asin(k MT_A / FL)) with w / k of
+    pa_head.coupling_pull, 4 decimals; every other cell from Final A's file"
+  max_vs_direct: 1.0e-4           # vs the own post rules on the own MT: one unit of the 4th decimal (intermediate rounding)
 
 lb_constants:
   - name: telemed_fl_shrink
@@ -96,23 +99,28 @@ lb_constants:
     rationale: "physics coupling FL sin(PA) = k MT with the expert k = 1.067 measured offline (static benchmark 1.07,
       VL 1.067); Telemed predictions had k 0.95-1.02. The pull weight was fixed on a pre-declared grid {0, 0.25,
       0.5} before scoring and only its first point was scored."
+  - name: telemed_pa_head
+    target: pa_head.telemed_head.enabled
+    grid: [false, true]
+    value: true
+    status: adopted
+    kind: method_choice
+    ledger: "KG0 0.23041 vs K25b 0.23297 (-0.00256); pre-registered rule: adopt in both finals if d < 0"
+    rationale: "offline-justified per-image head (benchmark regime evidence, see pa_head.telemed_head.evidence); the
+      gate is a sign test (s > 0), the 4-30 % strip is the v3 FieldConfig default, lambda is K25b's 0.25: no LB-tuned
+      constant"
   - name: telemed_mt_offset
     target: [mt_edge.constant_mm.telemed_artus_1200x800, mt_edge.constant_mm.telemed_artus_1088x644]
     grid: [0.0, -0.25, -0.5, -0.8]
     value: 0.0
     status: excluded_from_final_B
     kind: scanner_constant
-    ledger: "J4 (-0.5) won -0.00238 on the LB; no offline justification -> Final A only"
+    ledger: "J4 (-0.5) won -0.00238 on the LB; no offline justification -> Final A only. B' (this file) 0.23322 vs
+      Final A 0.23041"
     rationale: "Final B carries no LB-tuned continuous constant"
-
-mt_edge:
-  constant_mm:
-    default: 0.0
-    telemed_artus_1200x800: 0.0
-    telemed_artus_1088x644: 0.0
 
 declarations:
   - "LB-guided method choices (declared): Telemed FL unshrunk (C18); Lumify and Siemens PA / FL in their native
      square-pixel geometry with fixed per-scanner factors measured from image content (J1, J2); Telemed in image space
-     (J3 rejected); Telemed PA coupling pull lambda = 0.25 on a pre-declared grid (K25b). No LB-tuned continuous
-     constant."
+     (J3 rejected); Telemed PA coupling pull lambda = 0.25 on a pre-declared grid (K25b); Telemed PA head G0 (KG0,
+     offline-justified, sign-test gate, no new constant). No LB-tuned continuous constant."

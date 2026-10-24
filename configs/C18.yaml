@@ -216,6 +216,17 @@ pa_head:
   weights: [1.0, 1.0]
   mt_fail_below_mm: 5.0           # failure rule: MT < 5 mm -> PA, FL, MT missing (filled later)
   coupling_pull: {weight: 0.0, groups: [telemed], k: 1.067}
+  telemed_head:                   # post rule 4 (Final A / B = KG0); off in C18 and K25b
+    enabled: false
+    head: G0
+    definition: "G0 = pa_fd_strip where the insertion strip is steeper than fusF (s = pa_fd_ins - fusF > 0, a sign
+      test), else fusF; then the PA recipe (confidence rule toward the scanner-group median, clip median, + the
+      4-decimal rater offset) and the coupling term of coupling_pull on the MT / FL of rules 1-2. FL is unchanged."
+    groups: [telemed]
+    gate_column: pa_fd_ins        # field angle in the insertion strip (2-12 % MT above the deep edge) vs the local tangent
+    strip_column: pa_fd_strip     # field angle in the deep strip (4-30 % MT, FieldConfig default) vs the LOCAL tangent
+    coupling: true                # false: the recipe of G0 without the coupling term (the G0n contrast file)
+    check_tol: 2.0e-4             # the written-out recipe on fusF must reproduce the pipeline's Telemed PA (rules 1-3)
 
 # ------------------------------------------------------------------------------- 5. FL rules
 fl_rules:
