@@ -1,0 +1,11 @@
+{
+ "set": "dynamic",
+ "n": 168,
+ "n_ok": 168,
+ "inexact_curves": [],
+ "sec": 4.6,
+ "rss_gb": 0.22,
+ "sha256": {
+  "geom_dynamic.json.gz": "3a712354a90a726f3e17ef89d38de8acc70cbdb7ff4911cb57ef6c7fb366ef37"
+ }
+}

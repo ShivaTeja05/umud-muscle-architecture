@@ -26,6 +26,7 @@
     <canvas id="canvas" tabindex="0"></canvas>
     <canvas id="loupe" width="200" height="200"></canvas>
     <div id="toast" class="toast hidden"></div>
+    <div id="assist-banner" class="assist-banner hidden"></div>
     <div id="instruction" class="instruction"></div>
   </section>
 
@@ -44,6 +45,13 @@
       </div>
       <div id="warnings" class="warnings"></div>
       <table id="meas-table"><tbody></tbody></table>
+    </div>
+
+    <div class="card" id="assist-card">
+      <div class="checks">
+        <label title="FL: your fascicle is extended straight to the bands through your MT clicks. PA: the deep-aponeurosis arm is placed on the deep band. Needs 2-3 MT lines on the image."><input id="ck-geom" type="checkbox" checked> Auto-extend to the bands (E)</label>
+      </div>
+      <div id="assist-status" class="small"></div>
     </div>
 
     <div class="card hidden" id="review">
@@ -106,7 +114,7 @@
   <div class="modal-body">
     <button id="btn-help-close" class="close" title="Close (Esc)">&times;</button>
     <h2>Order of work</h2>
-    <ol>
+    <ol id="help-order">
       <li><b>Calibration</b> (12 images, ids CAL_01&ndash;CAL_12, violet in the grid). These are public benchmark images with known expert answers, which stay hidden. Measure them exactly like test images. They tell us your personal error and bias per parameter. Four of them are frames of a calf-raise video: there only FL and PA are needed, MT is optional.</li>
       <li><b>Telemed clips</b> (28 tasks, IMG_00056&ndash;00195, first frame of each clip).</li>
       <li>The other test images, only if there is time.</li>
@@ -129,6 +137,11 @@
       <li>MT: lines between the <b>inner</b> edges (the dark muscle side) of the two aponeuroses, never through the bright aponeurosis itself.</li>
       <li>FL: prefer fascicles in the <b>middle</b> of the image that need the least extrapolation; extend the line straight past the image edge when needed.</li>
       <li>PA: two clicks on the fascicle <b>close to where it meets the deep aponeurosis</b>, then two clicks along the deep aponeurosis right there.</li>
+    </ul>
+    <h2>Assists</h2>
+    <ul>
+      <li><b>Auto-extend to the bands</b> (<kbd>E</kbd>, on by default). Draw your <b>3 MT lines first</b>: the tool draws thin dashed bands through their top points and their bottom points. <b>FL</b>: click 2 or more points, well apart, along a clearly visible part of one fascicle, in any direction, and finish with <kbd>Enter</kbd> or a double-click. Both ends are extended (or trimmed) straight to the bands, along the direction of your first and last segment. <b>PA</b>: click 2 points on the fascicle near its insertion. The deep-aponeurosis arm is put on the deep band for you. You can drag every point afterwards.</li>
+      <li><b>Suggested lines</b> (work set only). Some images show dashed lines from our model. Press <kbd>Y</kbd> to copy them as a starting point, then check every line and drag the points that are off. Or just draw your own: the suggestions disappear after your first line. Some images have no suggestions.</li>
     </ul>
     <h2>Protocol (organiser, UMUD test labels)</h2>
     <ul>
@@ -158,9 +171,11 @@
       <tr><td><kbd>G</kbd> <kbd>L</kbd> <kbd>K</kbd> <kbd>V</kbd></td><td>toggle MT guides, loupe, 1 cm grid, value labels</td></tr>
       <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>previous / next frame of a clip (view only)</td></tr>
       <tr><td><kbd>X</kbd></td><td>flag image</td></tr>
+      <tr><td><kbd>E</kbd></td><td>auto-extend FL / PA to the bands through your MT lines (on / off)</td></tr>
+      <tr><td><kbd>Y</kbd></td><td>use the suggested lines as a starting point (work set, when shown)</td></tr>
       <tr><td><kbd>?</kbd> or <kbd>H</kbd></td><td>this help</td></tr>
     </table>
-    <p class="small">Model hints, if present, are revealed only after all 9 measurements of a test image are done (to avoid anchoring); calibration images never show model values or answers. Labels autosave to this browser and, via serve.py, to data/annotator/autosave.json and labels.csv. Hand labels of the test set must be declared as external data.</p>
+    <p class="small">Model hints, if present, are revealed only after all 9 measurements of a test image are done (to avoid anchoring); calibration images never show model values or answers. Labels autosave to this browser and, via serve.py, to autosave.json and labels.csv in the served data folder (data/annotator/ by default). Hand labels of the test set must be declared as external data.</p>
   </div>
 </div>
 

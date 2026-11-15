@@ -1,0 +1,19 @@
+{
+  "id": "shivateja005/umud-fasc-orient-v1fx-cpu",
+  "title": "UMUD Fasc Orient V1fx Cpu",
+  "code_file": "infer.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "competition_sources": [
+    "umud-challenge-muscle-architecture-in-ultrasound-data"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [
+    "shivateja005/umud-fasc-orient-v1"
+  ],
+  "model_sources": []
+}

@@ -12,10 +12,35 @@
  * answers; must be finished or explicitly skipped first), then 'clips' (the 28 Telemed clip tasks),
  * then 'test' (the other 169 test tasks).  A task may carry `need` (dynamic calibration frames:
  * MT optional) and view-only `frames`.  Calibration tasks never show model values.
+ *
+ * Optional manifest keys (all backward compatible; data/annotator/ uses none of them):
+ *   storage_key      browser-storage key, so that several data dirs served on the same port keep apart
+ *   phase_name       name of the non-clip phase (default 'Other test images'); progress_label: its
+ *                    short name in the progress line (default 'test')
+ *   help_order       list of plain-text lines that replace the help's "Order of work" list
+ *   hint_is_answer   the per-image `hint` is the expert answer (practice), not a model value;
+ *                    hint_label / hint_label_short name it, `hint_range` ([min, max] per value) and
+ *                    `hint_n` (number of experts: a number, or one per value) are shown with it
+ *   A label gets `first` ({mt, fl, pa, t}): a frozen copy of the clicks the first time it was complete.
+ *   calib_manifest.json: phase_name (default 'Calibration'), progress_label (default 'calib'), review_note
+ *
+ * Assists (README "Assists"; mt/fl/pa keep their format, so the maths, labels.py and the CSVs are unchanged):
+ *   Geometry assist (every data dir, setting `geomAssist`, default on, key E).  Bands = polylines through the
+ *   top / bottom points of the image's own MT lines (>= 2 needed), extended straight past the outer points.
+ *   FL: on finish both ends move along their end segments to the bands (extend or trim); stored as
+ *   [deep point, ...inner clicks..., superficial point].  PA: after the 2 fascicle clicks the deep-apo arm is
+ *   put on the deep band at +/- 5 mm around the crossing.  The maths is in the GEOM block below, mirrored in
+ *   assist_geom.py and checked against it by test_assist.py.
+ *   Pre-drawn suggestions (only when manifest.prefill_enabled === true): image entry `prefill`
+ *   {mt, fl, pa, apo_sup, apo_deep, confidence} drawn as dashed ghosts; Y copies mt/fl/pa into the label.
+ *   A task with `prefill_blind: true` never shows them ("No suggestions on this image").
+ *   Label fields added: `assist` {mt, fl, pa: one code per measurement ('hand', 'ext', 'arm', 'nomt',
+ *   'fail', 'prefill'); prefill_shown, prefill_accepted, prefill_blind, prefill_t}, `fl_raw` (the FL clicks
+ *   as made, parallel to fl; null for copied suggestions) and `prefill_start` ({mt, fl, pa, t}: what Y copied).
  */
 'use strict';
 (() => {
-  const LS_KEY = 'umud_annotator_v1';
+  let LS_KEY = 'umud_annotator_v1'; // manifest.storage_key overrides it
   const NEED = 3;
   const DEFAULT_NEED = { mt: NEED, fl: NEED, pa: NEED };
   const TOOLS = ['mt', 'fl', 'pa'];
@@ -36,8 +61,11 @@
   const IDLE_MS = 45000; // stop the per-image timer after this much inactivity
   const DEFAULT_SETTINGS = {
     bright: 0, contrast: 1, gamma: 1, autoEach: false, guides: true, loupe: true,
-    scale: false, labels: true, trackpad: false, lastTask: null,
+    scale: false, labels: true, trackpad: false, lastTask: null, geomAssist: true,
   };
+  const ARM_HALF_CM = 0.5; // PA assist: the deep-apo arm spans +/- 5 mm around the fascicle's crossing
+  const MAX_EXT_WIDTHS = 3; // an auto-extension longer than 3 image widths counts as impossible
+  const LABEL_EXTRA = ['fl_raw', 'assist', 'prefill_start']; // assist fields kept in undo snapshots
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('canvas');
@@ -52,7 +80,7 @@
   let taskIndexById = {};
   let pendingGateIdx = -1;
   let state = { version: 1, labels: {}, times: {}, settings: { ...DEFAULT_SETTINGS }, updated: 0 };
-  const cur = { idx: -1, frame: 0, tool: 'mt', pending: [], entry: null, src: null, adj: null, adjCtx: null, out: null };
+  const cur = { idx: -1, frame: 0, tool: 'mt', pending: [], entry: null, src: null, adj: null, adjCtx: null, out: null, paHow: 'hand' };
   const view = { s: 1, tx: 0, ty: 0, userMoved: false }; // userMoved: zoomed/panned since the last fit
   const mouse = { x: 0, y: 0, inside: false, down: null, drag: null, hover: null };
   const undoStacks = {};
@@ -155,6 +183,125 @@
     const [x1, , x2] = entry.viewport;
     return GUIDE_FRACS.map((f) => x1 + f * (x2 - x1));
   }
+
+  // ---------- geometry assist maths ----------
+  // Pure functions, no DOM.  tools/annotator/assist_geom.py is a line-by-line mirror, and test_assist.py runs
+  // this block (between the two markers) in node and compares it with the Python results.
+  // ASSIST-GEOM-BEGIN
+  const GEOM = (() => {
+    // A band is a list of >= 2 points with increasing x: y(x) is piecewise linear through them and continues
+    // straight past the first / last point with the slope of the nearest segment.
+    function cleanBand(pts) {
+      const s = pts.map((p) => [p[0], p[1]]).sort((p, q) => p[0] - q[0]);
+      const groups = []; // points less than 0.5 px apart in x are averaged (a vertical piece has no slope)
+      for (const p of s) {
+        const g = groups[groups.length - 1];
+        if (g && p[0] - g.x0 < 0.5) { g.n += 1; g.sx += p[0]; g.sy += p[1]; } else groups.push({ x0: p[0], n: 1, sx: p[0], sy: p[1] });
+      }
+      const band = groups.map((g) => [g.sx / g.n, g.sy / g.n]);
+      return band.length >= 2 ? band : null;
+    }
+    function bandsFromMT(mt) {
+      // superficial band through the upper point (smaller y) of each MT line, deep band through the lower one
+      if (!Array.isArray(mt) || mt.length < 2) return null;
+      const tops = [], bots = [];
+      for (const m of mt) {
+        if (m[0][1] <= m[1][1]) { tops.push(m[0]); bots.push(m[1]); } else { tops.push(m[1]); bots.push(m[0]); }
+      }
+      const sup = cleanBand(tops), deep = cleanBand(bots);
+      return sup && deep ? { sup, deep } : null;
+    }
+    function bandY(band, x) {
+      const k = band.length;
+      let j = 0;
+      while (j < k - 2 && x > band[j + 1][0]) j += 1;
+      const p = band[j], q = band[j + 1];
+      return p[1] + (q[1] - p[1]) * (x - p[0]) / (q[0] - p[0]);
+    }
+    function bandRoots(band, A, D) {
+      // every t where the line A + t*D meets the band, sorted; parallel pieces give no root
+      const k = band.length, roots = [];
+      const dn = Math.hypot(D[0], D[1]);
+      if (!(dn > 0)) return roots;
+      for (let j = 0; j < k - 1; j += 1) {
+        const p = band[j], q = band[j + 1];
+        const m = (q[1] - p[1]) / (q[0] - p[0]);
+        const den = D[1] - m * D[0];
+        if (Math.abs(den) <= 1e-9 * dn * Math.hypot(1, m)) continue;
+        const t = (p[1] + m * (A[0] - p[0]) - A[1]) / den;
+        const x = A[0] + t * D[0];
+        const lo = j === 0 ? -Infinity : p[0], hi = j === k - 2 ? Infinity : q[0];
+        if (x >= lo - 1e-7 && x <= hi + 1e-7) roots.push(t);
+      }
+      return roots.sort((a, b) => a - b);
+    }
+    function endPoint(band, pts, k, inward, maxDist) {
+      // pts[k] is the outermost point between the bands at this end.  If it is the end point itself, extend
+      // the end segment outward to the band; otherwise the line crosses the band between pts[k] and the next
+      // point outward: trim it there.
+      const endIdx = inward > 0 ? 0 : pts.length - 1;
+      const A = pts[k];
+      let D, tmax;
+      if (k === endIdx) { const nb = pts[k + inward]; D = [A[0] - nb[0], A[1] - nb[1]]; tmax = Infinity; } else { const o = pts[k - inward]; D = [o[0] - A[0], o[1] - A[1]]; tmax = 1 + 1e-9; }
+      const t = bandRoots(band, A, D).find((r) => r >= -1e-9 && r <= tmax);
+      if (t === undefined) return { why: 'its end segment never meets the band (parallel, or it points away)' };
+      const X = [A[0] + t * D[0], A[1] + t * D[1]];
+      if (Math.hypot(X[0] - A[0], X[1] - A[1]) > maxDist) return { why: 'the band is too far along its end segment (nearly parallel)' };
+      return { X, mode: k === endIdx ? (t > 1e-9 ? 'extend' : 'on') : 'trim' };
+    }
+    function extendFascicle(raw, bands, maxDist) {
+      // raw: >= 2 clicked points, any direction.  Returns {ok, pts, deep, sup, why}: pts goes from the deep band
+      // to the superficial band; the inner clicks are kept, the two ends sit on the bands.
+      const pts = [];
+      for (const p of raw) {
+        const l = pts[pts.length - 1];
+        if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) > 1e-6) pts.push([p[0], p[1]]);
+      }
+      if (pts.length < 2) return { ok: false, why: 'the line has no length' };
+      const sup = bands.sup, deep = bands.deep;
+      const a = pts[0], b = pts[pts.length - 1];
+      const ga = bandY(deep, a[0]) - bandY(sup, a[0]), gb = bandY(deep, b[0]) - bandY(sup, b[0]);
+      const norm = ga > 1e-9 && gb > 1e-9;
+      const da = norm ? (a[1] - bandY(sup, a[0])) / ga : a[1];
+      const db = norm ? (b[1] - bandY(sup, b[0])) / gb : b[1];
+      if (db > da) pts.reverse(); // pts[0] = the end nearer the deep band
+      const n = pts.length;
+      const beyondDeep = (q) => q[1] - bandY(deep, q[0]) > 0;
+      const beyondSup = (q) => bandY(sup, q[0]) - q[1] > 0;
+      let i = 0;
+      while (i < n && beyondDeep(pts[i])) i += 1;
+      let j = n - 1;
+      while (j >= 0 && beyondSup(pts[j])) j -= 1;
+      // i <= j: pts[i..j] are the clicks between the bands; i === j + 1: no click between them, but the segment
+      // pts[j] -> pts[i] crosses the whole muscle (both ends clicked into the bright bands); both ends are trimmed
+      const crossing = i === j + 1 && i < n && j >= 0;
+      if (!crossing && (i > j || beyondSup(pts[i]) || beyondDeep(pts[j]))) return { ok: false, why: 'no clicked point lies between the two bands' };
+      const e0 = endPoint(deep, pts, i, 1, maxDist);
+      if (!e0.X) return { ok: false, why: 'deep end: ' + e0.why };
+      const e1 = endPoint(sup, pts, j, -1, maxDist);
+      if (!e1.X) return { ok: false, why: 'superficial end: ' + e1.why };
+      if (Math.hypot(e1.X[0] - e0.X[0], e1.X[1] - e0.X[1]) < 1) return { ok: false, why: 'the extended line has no length' };
+      const inner = pts.slice(Math.max(i, 1), Math.min(j, n - 2) + 1);
+      return { ok: true, pts: [e0.X, ...inner, e1.X], deep: e0.mode, sup: e1.mode };
+    }
+    function paArm(f0, f1, deep, halfPx, maxDist) {
+      // where the fascicle line (f0, f1) meets the deep band (the crossing nearest the clicked segment), and two
+      // points on the band at x -/+ halfPx around it; null when they do not meet within maxDist
+      const D = [f1[0] - f0[0], f1[1] - f0[1]];
+      const len = Math.hypot(D[0], D[1]);
+      if (!(len > 1e-6)) return null;
+      const roots = bandRoots(deep, f0, D);
+      if (!roots.length) return null;
+      const off = (t) => (t < 0 ? -t : t > 1 ? t - 1 : 0);
+      let best = roots[0];
+      for (const r of roots) if (off(r) < off(best)) best = r;
+      if (off(best) * len > maxDist) return null;
+      const X = [f0[0] + best * D[0], f0[1] + best * D[1]];
+      return { X, arm: [[X[0] - halfPx, bandY(deep, X[0] - halfPx)], [X[0] + halfPx, bandY(deep, X[0] + halfPx)]] };
+    }
+    return { cleanBand, bandsFromMT, bandY, bandRoots, extendFascicle, paArm };
+  })();
+  // ASSIST-GEOM-END
 
   // ---------- persistence ----------
   function touch(lab) {
@@ -336,8 +483,11 @@
 
   // ---------- undo / redo ----------
   function snap(id) {
+    // the assist records (per-measurement codes, raw FL clicks, accepted suggestion) undo together with the lines
     const lab = getLabel(id, true);
-    return JSON.stringify({ mt: lab.mt, fl: lab.fl, pa: lab.pa });
+    const o = { mt: lab.mt, fl: lab.fl, pa: lab.pa };
+    for (const k of LABEL_EXTRA) o[k] = lab[k] === undefined ? null : lab[k];
+    return JSON.stringify(o);
   }
   function pushUndo(id = task().task_id) {
     (undoStacks[id] = undoStacks[id] || []).push(snap(id));
@@ -346,7 +496,9 @@
   }
   function restore(id, json) {
     const lab = getLabel(id, true);
-    Object.assign(lab, JSON.parse(json));
+    const o = JSON.parse(json);
+    for (const k of LABEL_EXTRA) if (o[k] === null || o[k] === undefined) { delete o[k]; delete lab[k]; }
+    Object.assign(lab, o);
     touch(lab);
   }
   function undo() {
@@ -367,6 +519,108 @@
     refresh();
   }
 
+  // ---------- assists ----------
+  const geomOn = () => state.settings.geomAssist !== false;
+  // bands from the MT lines of the current image (null with fewer than 2 MT lines at different x)
+  const currentBands = (lab = getLabel(task().task_id, false)) => (lab ? GEOM.bandsFromMT(lab.mt) : null);
+  const maxExt = () => MAX_EXT_WIDTHS * taskEntry().width;
+  const hasLines = (lab) => !!lab && TOOLS.some((t) => lab[t].length > 0);
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  function alignAssist(lab) {
+    // lab.assist[tool] and lab.fl_raw run parallel to lab[tool]; measurements made before the assist existed get null
+    const a = lab.assist && typeof lab.assist === 'object' ? lab.assist : (lab.assist = {});
+    for (const tool of TOOLS) {
+      if (!Array.isArray(a[tool])) a[tool] = [];
+      while (a[tool].length < lab[tool].length) a[tool].push(null);
+      a[tool].length = lab[tool].length;
+    }
+    if (!Array.isArray(lab.fl_raw)) lab.fl_raw = [];
+    while (lab.fl_raw.length < lab.fl.length) lab.fl_raw.push(null);
+    lab.fl_raw.length = lab.fl.length;
+    return a;
+  }
+  const pfCache = new WeakMap();
+  function cleanPrefill(entry) {
+    // the image's suggestion with every malformed line dropped (null if nothing usable is left)
+    if (!entry || !entry.prefill || typeof entry.prefill !== 'object') return null;
+    if (pfCache.has(entry)) return pfCache.get(entry);
+    const pf = entry.prefill;
+    const pt = (p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
+    const lines = (arr, n) => (Array.isArray(arr) ? arr : []).filter((m) => Array.isArray(m) && (n ? m.length === n : m.length >= 2) && m.every(pt)).slice(0, NEED);
+    const poly = (arr) => (Array.isArray(arr) && arr.length >= 2 && arr.every(pt) ? arr : null);
+    let out = { mt: lines(pf.mt, 2), fl: lines(pf.fl, 0), pa: lines(pf.pa, 4), apo_sup: poly(pf.apo_sup), apo_deep: poly(pf.apo_deep) };
+    if (!out.mt.length && !out.fl.length && !out.pa.length) out = null;
+    pfCache.set(entry, out);
+    return out;
+  }
+  // Pre-drawn suggestions exist only when manifest.prefill_enabled === true (the work set), never on calibration
+  // tasks.  null = not a suggestion data set; {blind: true} = control task; {pf: null} = no suggestion for the image.
+  function prefillInfo(t = task()) {
+    if (!manifest || manifest.prefill_enabled !== true || !t || isCalib(t)) return null;
+    if (t.prefill_blind === true) return { blind: true, pf: null };
+    return { blind: false, pf: cleanPrefill(taskEntry(t)) };
+  }
+  function ghostsVisible(t = task(), lab = getLabel(t.task_id, false)) {
+    // until the user accepts them (Y) or commits a line of their own (undo brings them back)
+    const info = prefillInfo(t);
+    return !!(info && info.pf && !hasLines(lab) && !(lab && lab.assist && lab.assist.prefill_shown));
+  }
+  function notePrefill(lab, t = task()) {
+    // which suggestion state the label was made under (work set only); called before a line is added
+    const info = prefillInfo(t);
+    if (!info) return;
+    const a = alignAssist(lab);
+    if (info.blind) Object.assign(a, { prefill_blind: true, prefill_shown: false, prefill_accepted: false });
+    else if (!info.pf) Object.assign(a, { prefill_blind: false, prefill_shown: false, prefill_accepted: false });
+    else if (!a.prefill_shown) Object.assign(a, { prefill_blind: false, prefill_shown: true, prefill_accepted: false });
+  }
+  function acceptPrefill() {
+    const t = task();
+    const info = prefillInfo(t);
+    if (!info) return; // not a suggestion data set: Y does nothing
+    if (!info.pf) return toast('No suggestions on this image.');
+    const id = t.task_id;
+    if (!ghostsVisible(t)) return toast('Suggestions are offered only before you draw your own lines on an image (undo your lines to get them back).');
+    const pf = info.pf;
+    const rp = (p) => [r2(p[0]), r2(p[1])];
+    // MT keeps the tool's rule: the deep point has the x of the superficial one
+    const copy = { mt: pf.mt.map((m) => [rp(m[0]), [r2(m[0][0]), r2(m[1][1])]]), fl: pf.fl.map((m) => m.map(rp)), pa: pf.pa.map((m) => m.map(rp)) };
+    cur.pending = [];
+    const lab = getLabel(id, true);
+    pushUndo(id);
+    lab.mt = clone(copy.mt); lab.fl = clone(copy.fl); lab.pa = clone(copy.pa);
+    const now = Date.now();
+    lab.prefill_start = { ...clone(copy), t: now };
+    const a = alignAssist(lab);
+    for (const tool of TOOLS) a[tool] = lab[tool].map(() => 'prefill');
+    lab.fl_raw = lab.fl.map(() => null);
+    Object.assign(a, { prefill_blind: false, prefill_shown: true, prefill_accepted: true, prefill_t: now });
+    touch(lab);
+    cur.tool = firstIncompleteTool(lab);
+    toast('Suggested lines copied. Check every line: drag the points that are off, or delete a line (x in the table) and draw it yourself.', 'ok');
+    refresh();
+  }
+  function toggleGeom() {
+    state.settings.geomAssist = !geomOn();
+    syncControls();
+    saveLocal();
+    toast(geomOn() ? 'Auto-extend to the bands: ON' : 'Auto-extend to the bands: OFF (FL and PA are drawn fully by hand)', 'ok');
+    refresh();
+  }
+  function flPreview(pts) {
+    // what the FL assist would store for these points (null when inactive or impossible)
+    if (pts.length < 2 || !geomOn()) return null;
+    const bands = currentBands();
+    if (!bands) return null;
+    const res = GEOM.extendFascicle(pts, bands, maxExt());
+    return res.ok ? res.pts : null;
+  }
+  function paPreview(f0, f1) {
+    if (!geomOn()) return null;
+    const bands = currentBands();
+    return bands ? GEOM.paArm(f0, f1, bands.deep, ARM_HALF_CM * taskEntry().px_per_cm, maxExt()) : null;
+  }
+
   // ---------- editing ----------
   function firstIncompleteTool(lab, need = needOf()) {
     const required = TOOLS.filter((t) => (need[t] ?? NEED) > 0);
@@ -378,18 +632,35 @@
     cur.tool = tool;
     refresh();
   }
-  function commit(tool, pts) {
+  function commit(tool, pts, meta = {}) {
+    // meta.how: how the line was made (lab.assist[tool] code); meta.raw: the FL clicks before the assist
     const id = task().task_id;
     const lab = getLabel(id, true);
     const wasComplete = status(id) === 'done';
     const calibWasPending = calibPending();
     pushUndo(id);
-    lab[tool].push(pts.map((p) => [r2(p[0]), r2(p[1])]));
+    notePrefill(lab);
+    const a = alignAssist(lab);
+    const rounded = pts.map((p) => [r2(p[0]), r2(p[1])]);
+    lab[tool].push(rounded);
+    a[tool].push(meta.how || 'hand');
+    if (tool === 'fl') lab.fl_raw.push(meta.raw ? meta.raw.map((p) => [r2(p[0]), r2(p[1])]) : clone(rounded));
     cur.pending = [];
     touch(lab);
     if (lab[tool].length >= NEED) cur.tool = firstIncompleteTool(lab);
-    if (!wasComplete && summarize(lab, mmPerPx(), needOf()).complete) {
-      if (isCalib() && calibWasPending && !calibPending()) toast('Calibration finished! Next: the 28 Telemed clips. Press N.', 'ok');
+    const nowComplete = summarize(lab, mmPerPx(), needOf()).complete;
+    // Freeze a copy of the clicks the first time the image is complete: practice progress is judged on this
+    // first attempt, not on points moved after the answer was shown.  Never changed afterwards.
+    if (nowComplete && !lab.first) {
+      lab.first = { mt: JSON.parse(JSON.stringify(lab.mt)), fl: JSON.parse(JSON.stringify(lab.fl)),
+        pa: JSON.parse(JSON.stringify(lab.pa)), t: Date.now() };
+      touch(lab);
+    }
+    if (!wasComplete && nowComplete) {
+      if (isCalib() && calibWasPending && !calibPending()) {
+        toast(tasks.some((x) => !isCalib(x)) ? 'Calibration finished! Next: the 28 Telemed clips. Press N.'
+          : `${PHASE_NAMES.calib} finished: all ${calibTasks().length} images are done.`, 'ok');
+      }
       else toast('Image finished: check the review panel, then N for next', 'ok');
     }
     refresh();
@@ -398,6 +669,11 @@
     const id = task().task_id;
     const lab = getLabel(id, true);
     pushUndo(id);
+    if (lab.assist || lab.fl_raw) {
+      const a = alignAssist(lab);
+      a[tool].splice(i, 1);
+      if (tool === 'fl') lab.fl_raw.splice(i, 1);
+    }
     lab[tool].splice(i, 1);
     cur.pending = [];
     cur.tool = tool;
@@ -433,14 +709,35 @@
       cur.pending.push(q);
     } else {
       cur.pending.push(q);
-      if (cur.pending.length === 4) return commit('pa', cur.pending);
+      if (cur.pending.length === 2) {
+        // geometry assist: the deep-aponeurosis arm comes from the deep band; otherwise 2 more clicks as before
+        cur.paHow = 'hand';
+        if (geomOn()) {
+          const bands = currentBands();
+          if (!bands) cur.paHow = 'nomt';
+          else {
+            const r = GEOM.paArm(cur.pending[0], cur.pending[1], bands.deep, ARM_HALF_CM * taskEntry().px_per_cm, maxExt());
+            if (r) return commit('pa', [cur.pending[0], cur.pending[1], ...r.arm], { how: 'arm' });
+            cur.paHow = 'fail';
+            toast('This fascicle line does not meet the deep band (nearly parallel?): click 2 points along the deep aponeurosis yourself.');
+          }
+        }
+      }
+      if (cur.pending.length === 4) return commit('pa', cur.pending, { how: cur.paHow || 'hand' });
     }
     refresh();
   }
   function finishFL() {
     if (cur.tool !== 'fl') return;
     if (cur.pending.length < 2) return toast('a fascicle needs at least 2 points');
-    commit('fl', cur.pending);
+    const raw = cur.pending.slice();
+    if (!geomOn()) return commit('fl', raw, { how: 'hand', raw });
+    const bands = currentBands();
+    if (!bands) return commit('fl', raw, { how: 'nomt', raw });
+    const res = GEOM.extendFascicle(raw, bands, maxExt());
+    if (res.ok) return commit('fl', res.pts, { how: 'ext', raw });
+    commit('fl', raw, { how: 'fail', raw });
+    toast(`Auto-extend not possible (${res.why}): your line was kept as drawn. Extend it by hand, or delete it and redraw.`);
   }
   function cancelPending() {
     if (cur.pending.length) { cur.pending = []; refresh(); }
@@ -605,10 +902,40 @@
     }
     if (label && opts.labels) { const s = toScr(f1, T); text(c, label, s.x + 6, s.y - 6, COLORS.pa); }
   }
+  function bandLine(band, x0, x1) {
+    const pts = [[x0, GEOM.bandY(band, x0)]];
+    for (const p of band) if (p[0] > x0 && p[0] < x1) pts.push(p);
+    pts.push([x1, GEOM.bandY(band, x1)]);
+    return pts;
+  }
+  function drawBands(c, T, bands) {
+    // the fitted bands the geometry assist extends to: faint, thin, dashed, drawn past the image edges
+    const w = taskEntry().width;
+    c.save();
+    c.globalAlpha = 0.6;
+    strokePath(c, bandLine(bands.sup, -0.5 * w, 1.5 * w), T, COLORS.apo, 1, [3, 5]);
+    strokePath(c, bandLine(bands.deep, -0.5 * w, 1.5 * w), T, COLORS.apo, 1, [3, 5]);
+    c.restore();
+  }
+  function drawGhosts(c, T, pf, opts) {
+    // pre-drawn suggestions: dashed, in the tool colours
+    const dash = [7, 5];
+    c.save();
+    c.globalAlpha = 0.8;
+    if (pf.apo_sup) strokePath(c, pf.apo_sup, T, COLORS.apo, 1, [2, 4]);
+    if (pf.apo_deep) strokePath(c, pf.apo_deep, T, COLORS.apo, 1, [2, 4]);
+    pf.mt.forEach((m) => strokePath(c, m, T, COLORS.mt, opts.w, dash));
+    pf.fl.forEach((m) => strokePath(c, m, T, COLORS.fl, opts.w, dash));
+    pf.pa.forEach((m) => { strokePath(c, [m[0], m[1]], T, COLORS.pa, opts.w, dash); strokePath(c, [m[2], m[3]], T, COLORS.apo, opts.w, dash); });
+    c.restore();
+  }
   function drawOverlays(c, T, opts) {
     const t = task();
     const lab = getLabel(t.task_id, false);
     const mmpp = mmPerPx(t);
+    const bands = geomOn() ? currentBands(lab) : null;
+    if (bands) drawBands(c, T, bands);
+    if (ghostsVisible(t, lab)) drawGhosts(c, T, prefillInfo(t).pf, opts);
     if (lab) {
       lab.mt.forEach((m, i) => {
         strokePath(c, m, T, COLORS.mt, opts.w);
@@ -635,10 +962,16 @@
       } else if (cur.tool === 'fl') {
         strokePath(c, pend, T, COLORS.fl, opts.w);
         if (mouse.inside) strokePath(c, [pend[pend.length - 1], mq], T, COLORS.pending, opts.w, [5, 3]);
+        const pv = flPreview(mouse.inside ? [...pend, mq] : pend); // where the assist will put the ends
+        if (pv) strokePath(c, pv, T, COLORS.fl, 1, [2, 4]);
         pend.forEach((q) => dot(c, q, T, COLORS.fl, 3));
       } else {
         if (pend.length >= 2) strokePath(c, [pend[0], pend[1]], T, COLORS.pa, opts.w);
         if (pend.length === 1 && mouse.inside) strokePath(c, [pend[0], mq], T, COLORS.pending, opts.w, [5, 3]);
+        if (pend.length === 1 && mouse.inside) {
+          const r = paPreview(pend[0], mq); // the deep-apo arm the assist will add
+          if (r) { strokePath(c, r.arm, T, COLORS.apo, 1, [3, 3]); strokePath(c, [mq, r.X], T, COLORS.pa, 1, [2, 4]); }
+        }
         if (pend.length === 3 && mouse.inside) drawPA(c, [pend[0], pend[1], pend[2], mq], T, { ...opts, labels: false });
         pend.forEach((q, i) => dot(c, q, T, i < 2 ? COLORS.pa : COLORS.apo, 3));
       }
@@ -656,8 +989,15 @@
     const mmpp = mmPerPx();
     if (!pend.length) return null;
     if (cur.tool === 'mt') return `${fmt(Math.abs(mq[1] - pend[0][1]) * mmpp)} mm`;
-    if (cur.tool === 'fl') return `${fmt(flValue([...pend, mq], mmpp))} mm`;
+    if (cur.tool === 'fl') {
+      const pv = flPreview([...pend, mq]);
+      return `${fmt(flValue([...pend, mq], mmpp))} mm` + (pv ? `, to the bands ${fmt(flValue(pv, mmpp))} mm` : '');
+    }
     if (pend.length === 3) return `${fmt(angleBetween(pend[0], pend[1], pend[2], mq))}°`;
+    if (pend.length === 1) {
+      const r = paPreview(pend[0], mq);
+      if (r) return `${fmt(angleBetween(pend[0], mq, r.arm[0], r.arm[1]))}°`;
+    }
     return null;
   }
   function draw() {
@@ -770,14 +1110,25 @@
         ? `<b class="mt">MT ${k}/3</b>${opt} click the <b>inner</b> (lower) edge of the <b>superficial</b> aponeurosis near the ${where} guide.`
         : `<b class="mt">MT ${k}/3</b>${opt} click the <b>inner</b> (upper) edge of the <b>first deep</b> aponeurosis (x is locked). <kbd>Esc</kbd> cancels.`;
     }
+    // geometry assist: active with >= 2 MT lines; switched on but inactive without them
+    const active = geomOn() && !!currentBands(lab);
+    const needMT = geomOn() && !active ? ' <span class="inote">Draw 2-3 MT lines first to enable auto-extend.</span>' : '';
     if (cur.tool === 'fl') {
-      return p === 0
+      if (active) {
+        return p === 0
+          ? `<b class="fl">FL ${k}/3</b> click 2 or more points, well apart, along one clearly visible fascicle near the centre (any direction), then <b>double-click</b> or <kbd>Enter</kbd>: both ends are extended straight to the dashed bands for you.`
+          : `<b class="fl">FL ${k}/3</b> ${p} point${p > 1 ? 's' : ''}. Keep clicking along the fascicle; <b>double-click</b> or <kbd>Enter</kbd> finishes it and extends it to the bands (thin dashed preview). <kbd>Backspace</kbd> removes the last point.`;
+      }
+      return (p === 0
         ? `<b class="fl">FL ${k}/3</b> trace a fascicle from the deep to the superficial aponeurosis: click points along it, outside the image is fine. Prefer fascicles near the centre (least extrapolation).`
-        : `<b class="fl">FL ${k}/3</b> ${p} point${p > 1 ? 's' : ''}. Keep clicking along the fascicle; <b>double-click</b> or <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> removes the last point.`;
+        : `<b class="fl">FL ${k}/3</b> ${p} point${p > 1 ? 's' : ''}. Keep clicking along the fascicle; <b>double-click</b> or <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> removes the last point.`) + needMT;
     }
-    return p < 2
+    if (active && p < 2) {
+      return `<b class="pa">PA ${k}/3</b> click 2 points along a fascicle close to its <b>insertion</b> into the deep aponeurosis (${p}/2). Use fascicles other than the FL ones. The deep-aponeurosis arm is added for you on the dashed deep band; drag its points if it is off.`;
+    }
+    return (p < 2
       ? `<b class="pa">PA ${k}/3</b> click 2 points along a fascicle close to its <b>insertion</b> into the deep aponeurosis (${p}/2). Use fascicles other than the FL ones.`
-      : `<b class="pa">PA ${k}/3</b> now click 2 points along the <b>deep aponeurosis</b> at that insertion (${p - 2}/2).`;
+      : `<b class="pa">PA ${k}/3</b> now click 2 points along the <b>deep aponeurosis</b> at that insertion (${p - 2}/2).`) + (p < 2 ? needMT : '');
   }
   function renderTaskInfo() {
     const t = task();
@@ -820,16 +1171,21 @@
     if (lab) lab.mt.forEach((m, i) => { if (m[1][1] < m[0][1]) warns.push(`MT${i + 1}: deep point is above the superficial one (fine if intended)`); });
     $('warnings').innerHTML = warns.map(esc).join('<br>');
     const rows = [];
+    const HOW = { ext: ['auto-ext', 'auto-extended to the bands (your clicks are kept in fl_raw)'], arm: ['auto-arm', 'deep-aponeurosis arm placed on the deep band'],
+      fail: ['as drawn', 'the assist could not extend this one: kept as drawn'], prefill: ['suggested', 'copied from the suggested lines: check it'] };
     for (const tool of ['pa', 'fl', 'mt']) {
       const color = tool === 'pa' ? COLORS.pa : COLORS[tool];
       for (let i = 0; i < NEED; i++) {
         const v = s['vals_' + tool][i];
+        const how = lab && lab.assist && Array.isArray(lab.assist[tool]) ? HOW[lab.assist[tool][i]] : null;
+        const tag = how ? ` <span class="how" title="${how[1]}">${how[0]}</span>` : '';
         rows.push(v === undefined
           ? `<tr class="empty"><td><span class="sw" style="background:${color}"></span>${NAMES[tool]}${i + 1}</td><td class="num">–</td><td></td></tr>`
-          : `<tr><td><span class="sw" style="background:${color}"></span>${NAMES[tool]}${i + 1}</td><td class="num">${fmt(v)} ${UNITS[tool]}</td><td class="num"><button class="del" data-tool="${tool}" data-i="${i}" title="delete">&times;</button></td></tr>`);
+          : `<tr><td><span class="sw" style="background:${color}"></span>${NAMES[tool]}${i + 1}${tag}</td><td class="num">${fmt(v)} ${UNITS[tool]}</td><td class="num"><button class="del" data-tool="${tool}" data-i="${i}" title="delete">&times;</button></td></tr>`);
       }
     }
     $('meas-table').tBodies[0].innerHTML = rows.join('');
+    renderAssist(t, lab);
     renderReview(s, t);
     const noteEl = $('note');
     if (document.activeElement !== noteEl) noteEl.value = lab ? lab.note || '' : '';
@@ -837,21 +1193,52 @@
     $('instruction').innerHTML = instruction();
     renderFrames(t);
   }
+  function renderAssist(t, lab) {
+    // right-panel status of the geometry assist, and the suggestion banner over the image (work set only)
+    const st = $('assist-status');
+    if (st) {
+      const bands = currentBands(lab);
+      st.innerHTML = !geomOn() ? 'Off: FL and PA are drawn fully by hand.'
+        : bands ? `On: FL ends and the PA deep arm go to the dashed bands through your ${lab.mt.length} MT lines.`
+          : '<span class="inote">Draw 2-3 MT lines first to enable auto-extend.</span>';
+    }
+    const el = $('assist-banner');
+    if (!el) return;
+    const info = prefillInfo(t);
+    let html = '', quiet = false;
+    if (info) {
+      if (ghostsVisible(t, lab)) html = 'Suggested lines from our model: press <kbd>Y</kbd> to use them as a starting point, or just draw your own. <button id="btn-prefill" class="mini">Use them (Y)</button>';
+      else if (!info.pf) { html = 'No suggestions on this image.'; quiet = true; }
+      else if (lab && lab.assist && lab.assist.prefill_accepted && hasLines(lab)) { html = 'Started from the suggested lines: check every line and drag the points that are off.'; quiet = true; }
+    }
+    el.innerHTML = html;
+    el.classList.toggle('hidden', !html);
+    el.classList.toggle('quiet', quiet);
+  }
   function renderReview(s, t) {
     const card = $('review');
     if (!s.complete) { card.classList.add('hidden'); return; }
     card.classList.remove('hidden');
     if (isCalib(t)) return renderCalibReview(s);
-    $('review-title').textContent = 'Review (shown only after the image is finished)';
+    if (manifest.prefill_enabled === true && !taskEntry(t).hint) {
+      // work set: no answers and no model values, only your own values and the geometry check
+      return renderCalibReview(s, 'Review (your values)', 'No answers on this set: only your own values, their spread and the geometry check. Fix only clear mistakes, then press <kbd>N</kbd>.');
+    }
+    const answer = !!manifest.hint_is_answer; // practice: the hint is the expert answer, not a model value
+    $('review-title').textContent = answer ? 'Review: you vs the experts (shown after the image is finished)' : 'Review (shown only after the image is finished)';
     const hint = taskEntry(t).hint;
-    const rows = ['<tr><th></th><th>you</th><th>model</th><th>&Delta;</th></tr>'];
+    const range = answer ? taskEntry(t).hint_range : null;
+    const head = esc(manifest.hint_label_short || (answer ? 'experts' : 'model'));
+    const rows = [`<tr><th></th><th>you</th><th>${head}</th>${range ? '<th>range</th>' : ''}<th>&Delta;</th></tr>`];
     for (const tool of ['pa', 'fl', 'mt']) {
       const mine = s[tool];
       const key = tool === 'pa' ? 'pa_deg' : tool + '_mm';
       const other = hint ? hint[key] : NaN;
       const d = mine - other;
-      const big = Number.isFinite(d) && Math.abs(d) > REVIEW_DELTA[tool];
-      rows.push(`<tr><td>${NAMES[tool]}</td><td class="num">${fmt(mine)}</td><td class="num">${fmt(other)}</td><td class="num${big ? ' flag' : ''}">${Number.isFinite(d) ? (d > 0 ? '+' : '') + fmt(d) : '–'}</td></tr>`);
+      const rg = range && Array.isArray(range[key]) ? range[key] : null;
+      const big = rg ? Number.isFinite(mine) && (mine < rg[0] || mine > rg[1]) : Number.isFinite(d) && Math.abs(d) > REVIEW_DELTA[tool];
+      const rgCell = range ? `<td class="num">${rg ? `${fmt(rg[0])}&ndash;${fmt(rg[1])}` : '–'}</td>` : '';
+      rows.push(`<tr><td>${NAMES[tool]}</td><td class="num">${fmt(mine)}</td><td class="num">${fmt(other)}</td>${rgCell}<td class="num${big ? ' flag' : ''}">${Number.isFinite(d) ? (d > 0 ? '+' : '') + fmt(d) : '–'}</td></tr>`);
     }
     $('review-table').tBodies[0].innerHTML = rows.join('');
     const geo = 1.065 * s.mt / Math.sin(s.pa * Math.PI / 180);
@@ -860,14 +1247,23 @@
     const spread = (tool) => { const v = s['vals_' + tool]; return Math.max(...v) - Math.min(...v); };
     if (spread('pa') > 8) notes.push(`PA values spread ${fmt(spread('pa'))}&deg;.`);
     if (spread('mt') > 4) notes.push(`MT values spread ${fmt(spread('mt'))} mm (fine if the muscle tapers).`);
-    if (!hint) notes.push('No model hints in the manifest.');
-    else notes.push(`Orange &Delta;: beyond ${REVIEW_DELTA.pa}&deg; / ${REVIEW_DELTA.fl} mm / ${REVIEW_DELTA.mt} mm: re-check which aponeurosis you used. The model can be wrong.`);
+    if (!hint) notes.push(answer ? 'No expert answer for this image.' : 'No model hints in the manifest.');
+    else if (answer) {
+      // hint_n: one number, or one per value ({pa_deg, fl_mm, mt_mm}) when some expert values are missing
+      const hn = taskEntry(t).hint_n;
+      const ns = (hn && typeof hn === 'object' ? Object.values(hn) : [hn]).filter((x) => Number.isFinite(x) && x > 0);
+      const n = ns.length ? (Math.min(...ns) === Math.max(...ns) ? `${ns[0]}` : `${Math.min(...ns)}-${Math.max(...ns)}`) : '';
+      notes.push(`${esc(manifest.hint_label || 'Expert answer')}${n ? ` = mean of ${n} experts` : ''}.`
+        + (range ? ' Range = lowest to highest expert. Orange &Delta;: you are outside that range.' : '')
+        + ' Find what you did differently (which aponeurosis, which fascicle, where you clicked). Do not move your points to match the answer.');
+    } else notes.push(`Orange &Delta;: beyond ${REVIEW_DELTA.pa}&deg; / ${REVIEW_DELTA.fl} mm / ${REVIEW_DELTA.mt} mm: re-check which aponeurosis you used. The model can be wrong.`);
     $('review-notes').innerHTML = notes.join('<br>');
   }
-  function renderCalibReview(s) {
-    // Calibration: no model values and no expert answers, only your own values and the same
-    // self-consistency check as on the test images.
-    $('review-title').textContent = 'Review (calibration image)';
+  function renderCalibReview(s, title = null, noteHtml = null) {
+    // Calibration (and the work set, with title / noteHtml): no model values and no expert answers, only your
+    // own values and the same self-consistency check as on the test images.
+    $('review-title').textContent = title || (calibManifest && calibManifest.phase_name
+      ? `Review (${String(calibManifest.phase_name).toLowerCase()} image)` : 'Review (calibration image)');
     const rows = ['<tr><th></th><th>you</th><th>spread of your 3</th></tr>'];
     for (const tool of ['pa', 'fl', 'mt']) {
       const v = s['vals_' + tool];
@@ -881,7 +1277,8 @@
       const ratio = s.fl / geo;
       notes.push(`Geometry check: 1.065&middot;MT/sin(PA) = ${fmt(geo)} mm vs your FL ${fmt(s.fl)} mm${ratio < 0.75 || ratio > 1.33 ? ' <span style="color:var(--warn)">(inconsistent, re-check PA/FL)</span>' : ''}.`);
     }
-    notes.push('Calibration image: no model values are shown, and the expert answers stay hidden. Measure it exactly as you would a test image, then press <kbd>N</kbd>.');
+    notes.push(noteHtml || (calibManifest && calibManifest.review_note ? esc(calibManifest.review_note)
+      : 'Calibration image: no model values are shown, and the expert answers stay hidden. Measure it exactly as you would a test image, then press <kbd>N</kbd>.'));
     $('review-notes').innerHTML = notes.join('<br>');
   }
   function renderFrames(t) {
@@ -904,9 +1301,9 @@
     });
     const c = counts.calib, test = { done: counts.clips.done + counts.test.done, flag: counts.clips.flag + counts.test.flag, n: counts.clips.n + counts.test.n };
     const parts = [];
-    if (c.n) parts.push(`calib <b>${c.done + c.flag}</b>/${c.n}` + (state.settings.calibSkipped && c.done + c.flag < c.n ? ' (skipped)' : ''));
-    parts.push(`clips <b>${counts.clips.done}</b>/${counts.clips.n}`);
-    parts.push(`test <b>${test.done}</b>/${test.n}` + (test.flag ? ` (${test.flag} flagged)` : ''));
+    if (c.n) parts.push(`${esc((calibManifest && calibManifest.progress_label) || 'calib')} <b>${c.done + c.flag}</b>/${c.n}` + (state.settings.calibSkipped && c.done + c.flag < c.n ? ' (skipped)' : ''));
+    if (counts.clips.n) parts.push(`clips <b>${counts.clips.done}</b>/${counts.clips.n}`);
+    if (test.n) parts.push(`${esc(manifest.progress_label || 'test')} <b>${test.done}</b>/${test.n}` + (test.flag ? ` (${test.flag} flagged)` : ''));
     $('progress').innerHTML = parts.join(' &middot; ');
     const doneTimes = tasks.filter((t) => status(t.task_id) === 'done').map((t) => state.times[t.task_id] || 0).filter((ms) => ms > 0);
     const totalMs = Object.values(state.times).reduce((a, b) => a + b, 0);
@@ -928,6 +1325,7 @@
     $('ck-scale').checked = st.scale;
     $('ck-labels').checked = st.labels;
     $('ck-trackpad').checked = st.trackpad;
+    if ($('ck-geom')) $('ck-geom').checked = st.geomAssist !== false;
   }
   function refresh() {
     if (!task()) return;
@@ -1175,6 +1573,8 @@
       case ',': case '<': showFrame(cur.frame - 1); break;
       case '.': case '>': showFrame(cur.frame + 1); break;
       case 'x': case 'X': setFlag(!(getLabel(task().task_id, false) || {}).flag); break;
+      case 'e': case 'E': toggleGeom(); break;
+      case 'y': case 'Y': acceptPrefill(); break;
       case '?': case '/': case 'h': case 'H': help.classList.remove('hidden'); break;
       case ' ': spaceHeld = true; e.preventDefault(); break;
       default: return;
@@ -1226,6 +1626,8 @@
     check('ck-scale', 'scale');
     check('ck-labels', 'labels');
     check('ck-trackpad', 'trackpad');
+    if ($('ck-geom')) check('ck-geom', 'geomAssist', refresh);
+    if ($('assist-banner')) $('assist-banner').addEventListener('click', (e) => { if (e.target.closest('#btn-prefill')) acceptPrefill(); });
     $('ck-flag').addEventListener('change', (e) => setFlag(e.target.checked));
     $('note').addEventListener('input', (e) => { const lab = getLabel(task().task_id, true); lab.note = e.target.value; touch(lab); renderProgress(); });
     $('btn-export').onclick = () => { exportCSV('test'); saveServer(); };
@@ -1278,6 +1680,10 @@
       calibManifest = res.ok ? await res.json() : null;
     } catch (err) { calibManifest = null; }
     if (calibManifest && !(calibManifest.tasks || []).length) calibManifest = null;
+    if (typeof manifest.storage_key === 'string' && manifest.storage_key) LS_KEY = manifest.storage_key;
+    if (manifest.phase_name) PHASE_NAMES.test = String(manifest.phase_name);
+    if (calibManifest && calibManifest.phase_name) PHASE_NAMES.calib = String(calibManifest.phase_name);
+    if (Array.isArray(manifest.help_order) && $('help-order')) $('help-order').innerHTML = manifest.help_order.map((x) => `<li>${esc(x)}</li>`).join('');
     imagesById = Object.fromEntries([...manifest.images, ...(calibManifest ? calibManifest.images : [])].map((e) => [e.image_id, e]));
     // Queue: calibration first, then the Telemed clip tasks, then every other test task.
     const calib = calibManifest ? calibManifest.tasks.map((t) => Object.assign(t, { phase: 'calib' })) : [];
@@ -1304,6 +1710,7 @@
     if (!n) $('help').classList.remove('hidden');
   }
   // read-only hooks for debugging / automated checks
-  window.__umud = { state: () => state, csv: () => buildCSV('test'), csvCalib: () => buildCSV('calib'), task: () => task(), view: () => ({ ...view }), importText: (t) => importCSV(t) };
+  window.__umud = { state: () => state, csv: () => buildCSV('test'), csvCalib: () => buildCSV('calib'), task: () => task(), view: () => ({ ...view }), importText: (t) => importCSV(t),
+    geom: GEOM, bands: () => currentBands(), prefill: () => prefillInfo(), ghosts: () => ghostsVisible() };
   init();
 })();

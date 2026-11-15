@@ -1,0 +1,39 @@
+{
+ "built_utc": "2026-11-06T23:54:32Z",
+ "embedded_sha256": {
+  "s5_train.py": "b2fe47edcfcd1cf4e34ce0695e5472f1f5b7edba01a610b276a027c80983aad6",
+  "vl_lines.json": "89af72261d03ae8464ddea2cd54180cfdf391a68d4d408915648a5693b4e25f0",
+  "tt_labels.csv": "e746bd6232e525f8940a23e99a450952661ec887c45b3f3948bf7ea6e19ed133",
+  "dyn_labels.csv": "5a797a26f93e565f739cbe5bab1f0327a2e56dd1c327d062aa398e10d4d43fdf",
+  "geom.csv": "6f934c46223a17504f813f6cae77730d2e580c294125df5e7d5b36129dc68afb",
+  "ids.json": "29f06295a325a8a3e021fa60b52877de4a23aaf930b89b498090299005e75148"
+ },
+ "embedded_bytes": {
+  "s5_train.py": 62841,
+  "vl_lines.json": 1117447,
+  "tt_labels.csv": 56313,
+  "dyn_labels.csv": 7212,
+  "geom.csv": 22468,
+  "ids.json": 8833
+ },
+ "arms": {
+  "gpu": {
+   "id": "shivateja005/umud-s5-direct-v30",
+   "env": {
+    "UMUD_S5_MODE": "gpu"
+   },
+   "gpu": true,
+   "run.py_sha256": "2459c170df13fa14d8f37e2d3657c0e5d03b0dbb3649314254113c2fcc55a3d1",
+   "run.py_bytes": 539555
+  },
+  "cpusmoke": {
+   "id": "shivateja005/umud-s5-direct-v30-cpusmoke",
+   "env": {
+    "UMUD_S5_MODE": "cpusmoke"
+   },
+   "gpu": false,
+   "run.py_sha256": "a567849aa3aa882d1c511784411aca33746b50fae0319c82bf11f46fdbf0d20d",
+   "run.py_bytes": 539565
+  }
+ }
+}

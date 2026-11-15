@@ -1,0 +1,47 @@
+{
+ "files": {
+  "vl_lines.json": {
+   "sha256": "89af72261d03ae8464ddea2cd54180cfdf391a68d4d408915648a5693b4e25f0",
+   "bytes": 1117447
+  },
+  "tt_labels.csv": {
+   "sha256": "e746bd6232e525f8940a23e99a450952661ec887c45b3f3948bf7ea6e19ed133",
+   "bytes": 56313
+  },
+  "dyn_labels.csv": {
+   "sha256": "5a797a26f93e565f739cbe5bab1f0327a2e56dd1c327d062aa398e10d4d43fdf",
+   "bytes": 7212
+  },
+  "geom.csv": {
+   "sha256": "6f934c46223a17504f813f6cae77730d2e580c294125df5e7d5b36129dc68afb",
+   "bytes": 22468
+  },
+  "ids.json": {
+   "sha256": "29f06295a325a8a3e021fa60b52877de4a23aaf930b89b498090299005e75148",
+   "bytes": 8833
+  }
+ },
+ "inputs_sha256": {
+  "kaggle/v16_insfield/payload/vl_lines.json": "89af72261d03ae8464ddea2cd54180cfdf391a68d4d408915648a5693b4e25f0",
+  "artifacts/external/timtrack_bench/labels.csv": "ae9e166a4eeb6d5ae47f10728d672a4d9e1af516434fb738385070953d778049",
+  "dynamic xlsx": "d01370d83d3cfbe9ba17ac179f1f0d90cbae055d26b7cf4f48cf646e703334ae",
+  "artifacts/candidates_v26/inputs/bench_frame.csv": "5b1a4945e8e84167ca894f395faa23f2146c0f528fb83a6d875eb33682b87cd7",
+  "artifacts/candidates_v26/inputs/test_state.csv": "ece2203ffb0edeeae478c28952013af0ef6b53d24db7bb1edb05697c8601c6ca",
+  "artifacts/ready/APLUS_v2 (ids only)": "8fd252872b4f03dfa8e5e8fccb76087668d33a33c20e29d6b3965ac0318a619d"
+ },
+ "expected": {
+  "vl_payload": 245,
+  "vl_used_ntracks_ge2": 244,
+  "tt_images": 130,
+  "tt_rows": 290,
+  "tt_by_subset": {
+   "tt3": 100,
+   "tt4a": 15,
+   "tt4b": 15
+  },
+  "dyn_frames_zip": 168,
+  "dyn_fl_labels": 167,
+  "static": 35,
+  "test": 309
+ }
+}

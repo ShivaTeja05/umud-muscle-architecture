@@ -1,0 +1,11 @@
+{
+ "set": "static",
+ "n": 35,
+ "n_ok": 35,
+ "inexact_curves": [],
+ "sec": 1.2,
+ "rss_gb": 0.28,
+ "sha256": {
+  "geom_static.json.gz": "8f068dfaad4b0a91ff1fa5de3d15f3c0e93dfe98fbcc6dd74d7577defd87c334"
+ }
+}

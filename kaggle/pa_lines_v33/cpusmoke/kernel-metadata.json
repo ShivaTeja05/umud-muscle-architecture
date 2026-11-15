@@ -1,0 +1,17 @@
+{
+  "id": "shivateja005/umud-pa-lines-v33-cpusmoke",
+  "title": "UMUD PA Lines v33 Cpusmoke",
+  "code_file": "train.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "competition_sources": [
+    "umud-challenge-muscle-architecture-in-ultrasound-data"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

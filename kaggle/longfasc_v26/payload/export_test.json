@@ -1,0 +1,11 @@
+{
+ "set": "test",
+ "n": 309,
+ "n_ok": 309,
+ "inexact_curves": [],
+ "sec": 16.3,
+ "rss_gb": 0.28,
+ "sha256": {
+  "geom_test.json.gz": "668cf2d073c07e7749388d1c0f11adfa0c5d9c3042fbd0eab6e4b22ceecf3d25"
+ }
+}

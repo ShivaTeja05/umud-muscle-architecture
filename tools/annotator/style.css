@@ -174,3 +174,14 @@ svg.schematic { width: 100%; max-width: 640px; height: auto; display: block; mar
 .sk-arc { fill: none; stroke: var(--pa); stroke-width: 1.5; }
 .sk-t { fill: #e6e8ec; font-size: 12px; paint-order: stroke; stroke: #0b0d11; stroke-width: 3px; }
 .sk-t.mt { fill: var(--mt); } .sk-t.fl { fill: var(--fl); } .sk-t.pa { fill: var(--pa); }
+
+/* assists: suggestion banner over the image, per-measurement tag, assist card */
+.assist-banner {
+  position: absolute; left: 10px; top: 10px; max-width: min(520px, calc(100% - 240px));
+  background: rgba(15, 17, 21, .9); border: 1px dashed var(--fl); border-radius: 8px;
+  padding: 6px 10px; z-index: 2;
+}
+.assist-banner.quiet { border-color: var(--line); color: var(--muted); }
+.assist-banner button { margin-left: 4px; border-color: var(--fl); }
+#meas-table .how { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; margin-left: 4px; }
+#assist-status { margin-top: 2px; }

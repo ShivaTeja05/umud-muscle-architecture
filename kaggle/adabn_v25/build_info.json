@@ -1,0 +1,22 @@
+{
+ "source_sha256": {
+  "apo_fix_src.py": "3fcf79708d6e0b623e8e037fd45266f5c65dde77f14a52e672d55244286739c4",
+  "fo_src.py": "e396d078794957eeb1a72c66469d13bf379688e6d918d83f8ba383886532abac",
+  "pipeline.py": "e33606355968b1c97b03ae1a2dca4c882b5d874a02409f099670e1ca1763d213",
+  "adabn_stages.py": "80c72b7398173ef84e6f652c8d63f113b3085aa0e5ca499072af46fceeebdca3"
+ },
+ "prereg_sha256": "4520c5d4c25e7a8eba383eb53cfc3f6dfee64922d83def2f600fd957316e0b88",
+ "addendum_sha256": "6f950b3aa73ff42a103d3ee22377b2ca668a4b6fab4a67f2e95e02043ec1b07c",
+ "built": "2026-11-05T04:49:41Z",
+ "ckpt_sha256": {
+  "fasc_unetpp_r34_384.pt": "13688183daaa1356ea34f7e9806ae3dbd94169473b829d344ad91e9886ac3842"
+ },
+ "kernel_sources": [
+  "shivateja005/umud-apo-v2",
+  "shivateja005/umud-fasc-orient-v1",
+  "shivateja005/umud-u-net-fascicle-384-cli",
+  "shivateja005/umud-apo-v2-fix-test",
+  "shivateja005/umud-apo-v2-fix-ext",
+  "shivateja005/umud-infer-maskbank"
+ ]
+}

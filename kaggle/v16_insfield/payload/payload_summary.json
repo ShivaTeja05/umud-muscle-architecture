@@ -1,0 +1,24 @@
+{
+  "n_images": 245,
+  "n_failed": 4,
+  "n_tracks": 740,
+  "n_subjects": 124,
+  "images_per_fold": {
+    "0": 46,
+    "1": 51,
+    "2": 49,
+    "3": 49,
+    "4": 50
+  },
+  "sha256": {
+    "vl_lines.json": "89af72261d03ae8464ddea2cd54180cfdf391a68d4d408915648a5693b4e25f0",
+    "fasc_folds.csv": "9cf568447913a47d6ae713dd443100a6250c9c921574a279a7e20dc16cfe93d3"
+  },
+  "bytes": {
+    "vl_lines.json": 1117447,
+    "fasc_folds.csv": 80310
+  },
+  "source": "OSF xbawc 'Example Annotated Images' (CC BY 4.0) label masks, parsed with scripts/vl_labels.py rules",
+  "step_px": 8.0,
+  "seed": 20261031
+}

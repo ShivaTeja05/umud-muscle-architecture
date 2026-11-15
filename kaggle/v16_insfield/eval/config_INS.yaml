@@ -1,0 +1,18 @@
+# v16 insfield eval overlay (design A maps): the Final A recipe, UNCHANGED, on the new fascicle field.
+# Not a submission config. Copy the kernel's maskbank to artifacts/kaggle/v16_insfield_A/maskbank first.
+schema: umud-config/2
+extends: <repo>/configs/final_A.yaml
+name: insfield_A
+reference:
+  file: ${repo}/artifacts/candidates_v10/KG0_K25b.csv
+  public_lb: 0.23041
+paths:
+  out_dir: ${repo}/artifacts/candidates_v16/nextgen-models/eval_A
+  test_layout: ${repo}/artifacts/candidates_v16/nextgen-models/eval_A/test_layout.csv
+maps:
+  sources:
+    fasc_field: {bank: "${repo}/artifacts/kaggle/v16_insfield_A/maskbank", model: fasc_ins_v16}
+rater_style:
+  mode: frozen
+output:
+  strict_pins: false

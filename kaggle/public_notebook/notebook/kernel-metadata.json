@@ -1,0 +1,15 @@
+{
+  "id": "shivateja005/umud-geometry-first-solution-lb-0-215",
+  "title": "UMUD geometry-first solution LB 0.215",
+  "code_file": "umud-solution.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "false",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "competition_sources": ["umud-challenge-muscle-architecture-in-ultrasound-data"],
+  "dataset_sources": ["shivateja005/umud-solution-code-and-measurements"],
+  "kernel_sources": [],
+  "model_sources": []
+}

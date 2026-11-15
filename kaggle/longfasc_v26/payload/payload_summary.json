@@ -1,0 +1,105 @@
+{
+ "written_utc": "2026-11-05T08:05:29Z",
+ "readout_version": "lf26-readout-1",
+ "files": {
+  "geom_dynamic.json.gz": {
+   "bytes": 99139,
+   "sha256": "3a712354a90a726f3e17ef89d38de8acc70cbdb7ff4911cb57ef6c7fb366ef37"
+  },
+  "geom_static.json.gz": {
+   "bytes": 26577,
+   "sha256": "8f068dfaad4b0a91ff1fa5de3d15f3c0e93dfe98fbcc6dd74d7577defd87c334"
+  },
+  "geom_test.json.gz": {
+   "bytes": 250248,
+   "sha256": "668cf2d073c07e7749388d1c0f11adfa0c5d9c3042fbd0eab6e4b22ceecf3d25"
+  },
+  "geom_vl.json.gz": {
+   "bytes": 170894,
+   "sha256": "27db71f24724bd07b2dc441c9d4aabff7c76ec77c8f941c293ced2cca6b14104"
+  },
+  "geom_vl_expert.json.gz": {
+   "bytes": 154259,
+   "sha256": "15cdd96030abcae2c23c5cace18675288bd1c539ea443e095c56eb3e6ef7e058"
+  },
+  "k0d_points_vl.json.gz": {
+   "bytes": 86554,
+   "sha256": "c4b5381b88bc87952e0ae26dff55ee49cea08ad15366bacead03efe9bca40965"
+  }
+ },
+ "code_sha256": {
+  "geometry_v2.py": "8dabe19fe0f99ce3cb37457f176ed7e90d584f8da17c2a8a33ebbd40901416f0",
+  "lf_readout.py": "e8b6004071b73c0a0499bb608125f83b090c18397aec0f44c4795a6474d8cc6a",
+  "env_lf.py": "756e0734e8b3260dc70a19c99bb79fc4003beea11aa9adbb844f1f345a0f9291",
+  "export_payload.py": "0c92e354979c748274bc9a281a17443014f6a7f6099aceec75fa98d4eb180626"
+ },
+ "exports": {
+  "test": {
+   "set": "test",
+   "n": 309,
+   "n_ok": 309,
+   "inexact_curves": [],
+   "sec": 16.3,
+   "rss_gb": 0.28,
+   "sha256": {
+    "geom_test.json.gz": "668cf2d073c07e7749388d1c0f11adfa0c5d9c3042fbd0eab6e4b22ceecf3d25"
+   }
+  },
+  "static": {
+   "set": "static",
+   "n": 35,
+   "n_ok": 35,
+   "inexact_curves": [],
+   "sec": 1.2,
+   "rss_gb": 0.28,
+   "sha256": {
+    "geom_static.json.gz": "8f068dfaad4b0a91ff1fa5de3d15f3c0e93dfe98fbcc6dd74d7577defd87c334"
+   }
+  },
+  "dynamic": {
+   "set": "dynamic",
+   "n": 168,
+   "n_ok": 168,
+   "inexact_curves": [],
+   "sec": 4.6,
+   "rss_gb": 0.22,
+   "sha256": {
+    "geom_dynamic.json.gz": "3a712354a90a726f3e17ef89d38de8acc70cbdb7ff4911cb57ef6c7fb366ef37"
+   }
+  },
+  "vl": {
+   "set": "vl",
+   "n": 249,
+   "n_ok": 248,
+   "inexact_curves": [],
+   "sec": 27.8,
+   "rss_gb": 0.25,
+   "sha256": {
+    "geom_vl.json.gz": "27db71f24724bd07b2dc441c9d4aabff7c76ec77c8f941c293ced2cca6b14104",
+    "geom_vl_expert.json.gz": "15cdd96030abcae2c23c5cace18675288bd1c539ea443e095c56eb3e6ef7e058",
+    "k0d_points_vl.json.gz": "c4b5381b88bc87952e0ae26dff55ee49cea08ad15366bacead03efe9bca40965"
+   },
+   "n_expert_ok": 248,
+   "inexact_expert_curves": [],
+   "n_expert_curves_checked": 496,
+   "n_k0d_points": 15104,
+   "k0d_local": "<repo>/artifacts/candidates_v26/runs/k0d_points_vl.csv"
+  }
+ },
+ "v1_bank_sha256": {
+  "test__fasc_orient_v1_seg.npz": "578daa0b99bc3c7fe88645c2dccbe06213ec89fe93b994fd9be83ca33ea2a5f9",
+  "test__fasc_orient_v1_cos2.npz": "d369954914b9bfc872d540cc7e4a6b42515ce5e07d438e81b32cac6c88438db3",
+  "test__fasc_orient_v1_sin2.npz": "3d0c907e1475786a0be3b4bfe5bb2472c1a75c9c9790165ca972c3f9fb33e798",
+  "static__fasc_orient_v1_seg.npz": "1eefcedcda722163d6107aa483847a05401c9512a22432fef165a5b86456e067",
+  "static__fasc_orient_v1_cos2.npz": "6b90dfc010adb3e163ca6ac4fecd080020ccbdd04b8ae3b91755f5c136f72681",
+  "static__fasc_orient_v1_sin2.npz": "db7fdaff1201c6d42de5a3d08a84c750ec4a31ad1315f13edab62c07a58ca997",
+  "dynamic__fasc_orient_v1_seg.npz": "ed161caa52d064116f80c12e4ba194f451d5001f17def57d158769d42f1a627f",
+  "dynamic__fasc_orient_v1_cos2.npz": "7468ce420ec39e6bec7a00846b6786dc62ba6bc7e3df12a43a7629c188db899d",
+  "dynamic__fasc_orient_v1_sin2.npz": "4bf306a4d22edb333dc315761110c8ba4e848c10749aa1acce785a68cde150ae",
+  "vl__fasc_orient_v1_seg.npz": "be823a8202a8379b652638d28b27a57319959377a632bd25cdc266868c951795",
+  "vl__fasc_orient_v1_cos2.npz": "5904781adeba432479b480149b902a3be9deefda0074a089929781cecb15c500",
+  "vl__fasc_orient_v1_sin2.npz": "b028653934cab844b4d3cc7b007d1f80d9919b9e81f899df9ef79c63c8326569"
+ },
+ "complete": true,
+ "bytes_total": 787671
+}

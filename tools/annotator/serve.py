@@ -42,8 +42,12 @@ SAVE_LOCK = threading.Lock()
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js",
           "/style.css": "style.css", "/favicon.ico": None}
 # Files under data/annotator/ the browser must never get (answers would anchor the annotator).
-DENY_PREFIXES = ("calib_answers", "calib_score", "calib_pipeline")
-DENY_DIRS = {"backups"}
+DENY_PREFIXES = ("calib_answers", "calib_score", "calib_pipeline",
+                 # manual-labelling kit answer files (they live in data/manual_labelling/private/, outside
+                 # every served data dir; denied here too in case one is ever copied into a data dir)
+                 "check_key", "pass_bar", "practice_key", "check_result", "selection", "work_selection",
+                 "build_cache")
+DENY_DIRS = {"backups", "private", "check_results"}  # compared in lower case (the macOS disk ignores case)
 
 
 def servable(data_dir: Path, rel: str) -> Path | None:
@@ -57,7 +61,7 @@ def servable(data_dir: Path, rel: str) -> Path | None:
     if not target.is_relative_to(root) or target.suffix.lower() not in {".png", ".json", ".csv"}:
         return None
     parts = target.relative_to(root).parts
-    if any(p in DENY_DIRS for p in parts[:-1]) or target.name.lower().startswith(DENY_PREFIXES):
+    if any(p.lower() in DENY_DIRS for p in parts[:-1]) or target.name.lower().startswith(DENY_PREFIXES):
         return None
     return target
 
@@ -187,7 +191,7 @@ def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
     print(f"UMUD annotator: http://127.0.0.1:{args.port}/   (data: {Handler.data_dir})")
-    print("Ctrl+C to stop. Labels autosave to data/annotator/autosave.json + labels.csv"
+    print(f"Ctrl+C to stop. Labels autosave to {Handler.data_dir}/autosave.json + labels.csv"
           + (" + calib_labels.csv" if (args.data / "calib_manifest.json").exists() else ""))
     try:
         server.serve_forever()

@@ -1,0 +1,18 @@
+{
+ "set": "vl",
+ "n": 249,
+ "n_ok": 248,
+ "inexact_curves": [],
+ "sec": 27.8,
+ "rss_gb": 0.25,
+ "sha256": {
+  "geom_vl.json.gz": "27db71f24724bd07b2dc441c9d4aabff7c76ec77c8f941c293ced2cca6b14104",
+  "geom_vl_expert.json.gz": "15cdd96030abcae2c23c5cace18675288bd1c539ea443e095c56eb3e6ef7e058",
+  "k0d_points_vl.json.gz": "c4b5381b88bc87952e0ae26dff55ee49cea08ad15366bacead03efe9bca40965"
+ },
+ "n_expert_ok": 248,
+ "inexact_expert_curves": [],
+ "n_expert_curves_checked": 496,
+ "n_k0d_points": 15104,
+ "k0d_local": "<repo>/artifacts/candidates_v26/runs/k0d_points_vl.csv"
+}

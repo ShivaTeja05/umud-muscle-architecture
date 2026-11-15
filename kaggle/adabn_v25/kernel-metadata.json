@@ -1,0 +1,25 @@
+{
+  "id": "shivateja005/umud-adabn-v25",
+  "title": "UMUD AdaBN v25",
+  "code_file": "kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "competition_sources": [
+    "umud-challenge-muscle-architecture-in-ultrasound-data"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [
+    "shivateja005/umud-apo-v2",
+    "shivateja005/umud-fasc-orient-v1",
+    "shivateja005/umud-u-net-fascicle-384-cli",
+    "shivateja005/umud-apo-v2-fix-test",
+    "shivateja005/umud-apo-v2-fix-ext",
+    "shivateja005/umud-infer-maskbank"
+  ],
+  "model_sources": [],
+  "machine_shape": "NvidiaTeslaT4"
+}

@@ -1,0 +1,95 @@
+{
+ "built_utc": "2026-11-05T08:10:02Z",
+ "payload_dir": "<repo>/kaggle/longfasc_v26/payload",
+ "payload_complete": true,
+ "payload_summary_sha256": "848535347f6f564355665f15f61f89532b03f7fcb09a8c39634f02e301a0a919",
+ "template_from": {
+  "file": "kaggle/fasc_orient_v3/train.py",
+  "sha256": "a7778983bcedbb1d8b92b03570837276e29c8b1463a91731ab2c44db76e64706"
+ },
+ "prereg_sha256": {
+  "PREREG_v26_longfasc.json": "fa8c07e0e020a38430cdda05d38565b5c38b5c363765fca5c7c4139e6da6590f",
+  "PREREG_v26_r1.json": "b025d7a9bbb062cb380b21ebfdcf404cd8b15014e31354de418670ff56c1de60",
+  "PREREG_v26_addendum_K.json": "e17222a001de2aac9b660c40dc7ae4846a274bf5cf8e581b45e61d7f3b24d7cf",
+  "PREREG_v26_addendum_K_r1.json": "2a7c3addbc6b13ed0aaa0b69d3d41af3aa65a3320e8b5f1a2e42da5162a11451"
+ },
+ "slim_frags": true,
+ "payload_file_sha256_before_slim": {
+  "payload/geom_dynamic.json.gz": "3a712354a90a726f3e17ef89d38de8acc70cbdb7ff4911cb57ef6c7fb366ef37",
+  "payload/geom_static.json.gz": "8f068dfaad4b0a91ff1fa5de3d15f3c0e93dfe98fbcc6dd74d7577defd87c334",
+  "payload/geom_test.json.gz": "668cf2d073c07e7749388d1c0f11adfa0c5d9c3042fbd0eab6e4b22ceecf3d25",
+  "payload/geom_vl.json.gz": "27db71f24724bd07b2dc441c9d4aabff7c76ec77c8f941c293ced2cca6b14104",
+  "payload/geom_vl_expert.json.gz": "15cdd96030abcae2c23c5cace18675288bd1c539ea443e095c56eb3e6ef7e058",
+  "payload/k0d_points_vl.json.gz": "c4b5381b88bc87952e0ae26dff55ee49cea08ad15366bacead03efe9bca40965"
+ },
+ "files": {
+  "train.py": {
+   "bytes": 146844,
+   "sha256": "f0a83bca0e6d81e430f4685559b619df626ed6fb124895b1e69c19fe10d83c45"
+  },
+  "geometry_v2.py": {
+   "bytes": 101403,
+   "sha256": "8dabe19fe0f99ce3cb37457f176ed7e90d584f8da17c2a8a33ebbd40901416f0"
+  },
+  "lf_readout.py": {
+   "bytes": 22067,
+   "sha256": "e8b6004071b73c0a0499bb608125f83b090c18397aec0f44c4795a6474d8cc6a"
+  },
+  "payload/geom_dynamic.json.gz": {
+   "bytes": 73881,
+   "sha256": "9923b5b7ae059104e109070cc875f4617247c97d5af85fc0d7a31c5ad643b453"
+  },
+  "payload/geom_static.json.gz": {
+   "bytes": 19387,
+   "sha256": "75a1d946ae1750e98177d20444dafbb18a37b8293c9e63a11e7c59866c4f5731"
+  },
+  "payload/geom_test.json.gz": {
+   "bytes": 178057,
+   "sha256": "94a8ef0fc7c7cd314449199d1e0ac1343abae2ecde6011268d8679c3f46dfffb"
+  },
+  "payload/geom_vl.json.gz": {
+   "bytes": 125516,
+   "sha256": "d3c8880fe217d9d386e25116492a2bec9af64c3c6909e9af68bdb0b7ea2d860a"
+  },
+  "payload/geom_vl_expert.json.gz": {
+   "bytes": 105600,
+   "sha256": "63e6a9ef91a7f29adfa7eb0e7d6fe9805634761489befbb72b84b503071a46bc"
+  },
+  "payload/k0d_points_vl.json.gz": {
+   "bytes": 86554,
+   "sha256": "c4b5381b88bc87952e0ae26dff55ee49cea08ad15366bacead03efe9bca40965"
+  },
+  "payload/payload_summary.json": {
+   "bytes": 4002,
+   "sha256": "848535347f6f564355665f15f61f89532b03f7fcb09a8c39634f02e301a0a919"
+  },
+  "payload/l0_ref.json": {
+   "bytes": 71495,
+   "sha256": "70a677d05129753c44f8e72bbbbe8345c246a3e2cc77e02dfa4f538409baa0e0"
+  }
+ },
+ "l0_ref_images": {
+  "prod": 760,
+  "expert": 248
+ },
+ "arms": {
+  "gpu": {
+   "id": "shivateja005/umud-longfasc-v26",
+   "env": {
+    "UMUD_MODE": "full"
+   },
+   "kernel_py_bytes": 937026,
+   "kernel_py_sha256": "6da970e0712029ca526f5b07cdb62b314b9be297ab75f23cf1970e705f29a0ad",
+   "size_warning": false
+  },
+  "cpusmoke": {
+   "id": "shivateja005/umud-longfasc-v26-cpusmoke",
+   "env": {
+    "UMUD_MODE": "cpusmoke"
+   },
+   "kernel_py_bytes": 937035,
+   "kernel_py_sha256": "0e7abfeaee0810f5b5a98e84bfa0b249529d9272fdf4cebea305db483907cf88",
+   "size_warning": false
+  }
+ }
+}

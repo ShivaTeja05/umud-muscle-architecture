@@ -1,0 +1,19 @@
+{
+  "id": "shivateja005/umud-fasc-orient-v3-cnx-fm-cpusmoke",
+  "title": "UMUD Fasc Orient V3 Cnx Fm Cpusmoke",
+  "code_file": "train.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "competition_sources": [
+    "umud-challenge-muscle-architecture-in-ultrasound-data"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [
+    "shivateja005/umud-fasc-orient-v1"
+  ],
+  "model_sources": []
+}

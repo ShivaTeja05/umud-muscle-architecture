@@ -11,3 +11,6 @@ artifacts/
 *.tar
 *.tar.gz
 .DS_Store
+
+# copy of the tracked code plus build inputs, published as the Kaggle dataset
+kaggle/public_notebook/dataset/repo/
